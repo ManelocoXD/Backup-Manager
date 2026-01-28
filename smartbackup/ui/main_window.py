@@ -54,12 +54,16 @@ class MainWindow(ctk.CTk):
         self._dest_path: Optional[str] = self._config.last_destination
         self._backup_thread: Optional[threading.Thread] = None
         self._is_running = False
+        self._scheduled_backup_window = None
         
         # Create UI
         self._create_widgets()
         
         # Restore last values
         self._restore_state()
+        
+        # Setup scheduler callbacks
+        self._setup_scheduler_callbacks()
         
         # Start scheduler
         self._scheduler.start()
@@ -693,3 +697,46 @@ class MainWindow(ctk.CTk):
                 self._("restore"),
                 f"{self._('status_error')}\n\n{result.error_message}"
             )
+    
+    def _setup_scheduler_callbacks(self):
+        """Setup callbacks for scheduled backup events."""
+        self._scheduler.set_callbacks(
+            on_start=self._on_scheduled_backup_start,
+            on_complete=self._on_scheduled_backup_complete,
+            on_progress=self._on_scheduled_backup_progress
+        )
+    
+    def _on_scheduled_backup_start(self, schedule):
+        """Called when a scheduled backup starts."""
+        from .progress_window import ScheduledBackupWindow
+        
+        def create_window():
+            self._scheduled_backup_window = ScheduledBackupWindow(
+                schedule_name=schedule.name,
+                lang=self._config.language,
+                on_close=self._on_scheduled_window_closed
+            )
+        
+        # Create window on main thread
+        self.after(0, create_window)
+    
+    def _on_scheduled_backup_progress(self, progress):
+        """Called during scheduled backup with progress updates."""
+        def update():
+            if self._scheduled_backup_window:
+                self._scheduled_backup_window.update_progress(progress)
+        
+        self.after(0, update)
+    
+    def _on_scheduled_backup_complete(self, schedule, result):
+        """Called when a scheduled backup completes."""
+        def show_complete():
+            if self._scheduled_backup_window:
+                # Show completion and auto-close after 60 seconds
+                self._scheduled_backup_window.show_complete(result, auto_close_seconds=60)
+        
+        self.after(0, show_complete)
+    
+    def _on_scheduled_window_closed(self):
+        """Called when the scheduled backup window is closed."""
+        self._scheduled_backup_window = None
