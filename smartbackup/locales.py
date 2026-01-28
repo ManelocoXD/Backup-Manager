@@ -70,6 +70,80 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "es": "Copia todos los archivos que cambiaron desde el último respaldo COMPLETO. Balance entre velocidad y simplicidad."
     },
     
+    # Frequency options
+    "freq_once": {
+        "en": "Once",
+        "es": "Una vez"
+    },
+    "freq_hourly": {
+        "en": "Hourly",
+        "es": "Cada hora"
+    },
+    "freq_daily": {
+        "en": "Daily",
+        "es": "Diario"
+    },
+    "freq_weekly": {
+        "en": "Weekly",
+        "es": "Semanal"
+    },
+    "freq_monthly": {
+        "en": "Monthly",
+        "es": "Mensual"
+    },
+    "freq_custom": {
+        "en": "Custom days",
+        "es": "Días personalizados"
+    },
+    "hour_interval": {
+        "en": "Every",
+        "es": "Cada"
+    },
+    "hours": {
+        "en": "hours",
+        "es": "horas"
+    },
+    "time": {
+        "en": "Time",
+        "es": "Hora"
+    },
+    "select_days": {
+        "en": "Select days",
+        "es": "Seleccionar días"
+    },
+    "day_of_month": {
+        "en": "Day of month",
+        "es": "Día del mes"
+    },
+    "monday": {
+        "en": "Monday",
+        "es": "Lunes"
+    },
+    "tuesday": {
+        "en": "Tuesday",
+        "es": "Martes"
+    },
+    "wednesday": {
+        "en": "Wednesday",
+        "es": "Miércoles"
+    },
+    "thursday": {
+        "en": "Thursday",
+        "es": "Jueves"
+    },
+    "friday": {
+        "en": "Friday",
+        "es": "Viernes"
+    },
+    "saturday": {
+        "en": "Saturday",
+        "es": "Sábado"
+    },
+    "sunday": {
+        "en": "Sunday",
+        "es": "Domingo"
+    },
+    
     # Actions
     "backup_now": {
         "en": "Protect Now",
