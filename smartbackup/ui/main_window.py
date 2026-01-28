@@ -56,6 +56,9 @@ class MainWindow(ctk.CTk):
         self._is_running = False
         self._scheduled_backup_window = None
         
+        # System tray for background operation
+        self._setup_system_tray()
+        
         # Create UI
         self._create_widgets()
         
@@ -67,6 +70,9 @@ class MainWindow(ctk.CTk):
         
         # Start scheduler
         self._scheduler.start()
+        
+        # Handle window close - minimize to tray instead of exit
+        self.protocol("WM_DELETE_WINDOW", self._on_close_request)
     
     def _create_widgets(self):
         """Create all UI widgets with premium design."""
@@ -740,3 +746,53 @@ class MainWindow(ctk.CTk):
     def _on_scheduled_window_closed(self):
         """Called when the scheduled backup window is closed."""
         self._scheduled_backup_window = None
+    
+    def _setup_system_tray(self):
+        """Initialize system tray for background operation."""
+        from .system_tray import SystemTray, is_tray_available
+        
+        if is_tray_available():
+            self._tray = SystemTray(
+                on_show_window=self._show_from_tray,
+                on_exit=self._exit_app,
+                lang=self._config.language
+            )
+            self._tray.start()
+        else:
+            self._tray = None
+    
+    def _on_close_request(self):
+        """Handle window close - minimize to tray instead of exiting."""
+        if self._tray:
+            # Minimize to tray
+            self.withdraw()  # Hide window
+            
+            # Show notification that app is still running
+            if self._config.language == "es":
+                msg = "SmartBackup sigue ejecutándose en segundo plano.\\nLos backups programados continuarán funcionando."
+            else:
+                msg = "SmartBackup is still running in background.\\nScheduled backups will continue to work."
+            
+            # Update tray tooltip
+            self._tray.update_tooltip("SmartBackup - En segundo plano")
+        else:
+            # No tray available, just exit
+            self._exit_app()
+    
+    def _show_from_tray(self):
+        """Show the window from system tray."""
+        self.deiconify()  # Show window
+        self.lift()  # Bring to front
+        self.focus_force()  # Focus
+    
+    def _exit_app(self):
+        """Fully exit the application."""
+        # Stop tray
+        if self._tray:
+            self._tray.stop()
+        
+        # Stop scheduler
+        self._scheduler.stop()
+        
+        # Destroy window
+        self.destroy()
