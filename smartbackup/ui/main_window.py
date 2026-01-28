@@ -146,6 +146,21 @@ class MainWindow(ctk.CTk):
         )
         schedule_btn.pack(side="left", padx=(0, 10))
         
+        # Restore button - prominent
+        restore_btn = ctk.CTkButton(
+            actions_frame,
+            text="🔄 " + self._("restore"),
+            command=self._show_restore_dialog,
+            width=130,
+            height=42,
+            corner_radius=10,
+            fg_color="#FFFFFF",
+            hover_color="#F0F0F0",
+            text_color=self._colors["secondary"],
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        restore_btn.pack(side="left", padx=(0, 10))
+        
         # Help button - subtle
         help_btn = ctk.CTkButton(
             actions_frame,
@@ -576,3 +591,105 @@ class MainWindow(ctk.CTk):
         """Cancel the running backup."""
         self._engine.cancel()
         self._status_label.configure(text=self._("status_cancelled"))
+    
+    def _show_restore_dialog(self):
+        """Show dialog to select backup folder and restore destination."""
+        from tkinter import filedialog, messagebox
+        
+        # Select backup folder to restore from
+        backup_folder = filedialog.askdirectory(
+            title=self._("select_backup_folder")
+        )
+        if not backup_folder:
+            return
+        
+        # Select destination for restore
+        restore_dest = filedialog.askdirectory(
+            title=self._("select_restore_destination")
+        )
+        if not restore_dest:
+            return
+        
+        # Confirm restore
+        confirm = messagebox.askyesno(
+            self._("restore"),
+            f"{self._('select_backup_folder')}:\n{backup_folder}\n\n"
+            f"{self._('select_restore_destination')}:\n{restore_dest}\n\n"
+            f"¿Continuar con la restauración?"
+        )
+        
+        if confirm:
+            self._start_restore(backup_folder, restore_dest)
+    
+    def _start_restore(self, backup_folder: str, restore_dest: str):
+        """Start the restore operation."""
+        from .backup_engine import RestoreResult
+        
+        # Switch UI to running state
+        self._is_running = True
+        self._backup_btn.pack_forget()
+        self._cancel_btn.pack(fill="x")
+        self._progress_frame.pack(fill="x", pady=(0, 20))
+        self._progress_bar.set(0)
+        self._status_label.configure(text=self._("restoring"))
+        self._file_label.configure(text="")
+        
+        # Start restore in thread
+        self._backup_thread = threading.Thread(
+            target=self._run_restore_thread,
+            args=(backup_folder, restore_dest),
+            daemon=True
+        )
+        self._backup_thread.start()
+    
+    def _run_restore_thread(self, backup_folder: str, restore_dest: str):
+        """Run restore in background thread."""
+        from .backup_engine import BackupProgress
+        
+        def on_progress(progress: BackupProgress):
+            self.after(0, lambda: self._update_progress(progress))
+        
+        result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
+        self.after(0, lambda: self._handle_restore_result(result))
+    
+    def _handle_restore_result(self, result):
+        """Handle restore completion."""
+        from .backup_engine import RestoreResult
+        
+        self._is_running = False
+        
+        # Reset UI
+        self._cancel_btn.pack_forget()
+        self._backup_btn.pack(fill="x")
+        self._progress_bar.set(1 if result.success else 0)
+        
+        if result.success:
+            self._status_label.configure(
+                text=self._("restore_complete"),
+                text_color=self._colors["success"]
+            )
+            
+            stats = f"✅ {self._('files_restored', count=result.files_restored)}"
+            if result.files_skipped > 0:
+                stats += f" | {self._('files_skipped', count=result.files_skipped)}"
+            stats += f" | {format_bytes(result.bytes_restored)} | {format_duration(result.duration_seconds)}"
+            self._stats_label.configure(text=stats)
+            
+            messagebox.showinfo(
+                self._("restore"),
+                self._("restore_complete") + f"\n\n{stats}"
+            )
+        elif result.error_message and "cancelled" in result.error_message.lower():
+            self._status_label.configure(
+                text=self._("restore_cancelled"),
+                text_color=self._colors["warning"]
+            )
+        else:
+            self._status_label.configure(
+                text=self._("status_error"),
+                text_color=self._colors["danger"]
+            )
+            messagebox.showerror(
+                self._("restore"),
+                f"{self._('status_error')}\n\n{result.error_message}"
+            )

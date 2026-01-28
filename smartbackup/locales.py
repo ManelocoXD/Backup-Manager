@@ -87,6 +87,38 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Close",
         "es": "Cerrar"
     },
+    "restore": {
+        "en": "Restore",
+        "es": "Restaurar"
+    },
+    "restore_now": {
+        "en": "Restore Now",
+        "es": "Restaurar Ahora"
+    },
+    "select_backup_folder": {
+        "en": "Select backup folder to restore",
+        "es": "Seleccionar carpeta de backup a restaurar"
+    },
+    "select_restore_destination": {
+        "en": "Select restore destination",
+        "es": "Seleccionar destino de restauración"
+    },
+    "restore_complete": {
+        "en": "Restore completed successfully!",
+        "es": "¡Restauración completada exitosamente!"
+    },
+    "restore_cancelled": {
+        "en": "Restore cancelled",
+        "es": "Restauración cancelada"
+    },
+    "restoring": {
+        "en": "Restoring...",
+        "es": "Restaurando..."
+    },
+    "files_restored": {
+        "en": "{count} files restored",
+        "es": "{count} archivos restaurados"
+    },
     
     # Status messages
     "status_ready": {

@@ -5,6 +5,7 @@ Implements Full, Incremental, and Differential backup modes.
 
 import os
 import shutil
+import locale
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Callable, List, Generator, Tuple
@@ -14,6 +15,11 @@ import threading
 
 from .hasher import compute_file_hash, compute_quick_hash
 from .database import get_database
+
+# Day names in Spanish
+DAYS_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+MONTHS_ES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
+             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
 
 class BackupMode(Enum):
@@ -51,6 +57,19 @@ class BackupResult:
     files_copied: int
     files_skipped: int
     bytes_copied: int
+    duration_seconds: float
+    backup_folder: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class RestoreResult:
+    """Result of a restore operation."""
+    success: bool
+    files_total: int
+    files_restored: int
+    files_skipped: int
+    bytes_restored: int
     duration_seconds: float
     error_message: Optional[str] = None
 
@@ -94,9 +113,41 @@ class BackupEngine:
             if item.is_file():
                 yield item
     
+    def _get_all_directories(self, source: Path) -> Generator[Path, None, None]:
+        """Recursively get all directories in source directory."""
+        for item in source.rglob("*"):
+            if item.is_dir():
+                yield item
+    
     def _count_files(self, source: Path) -> int:
         """Count total files in source directory."""
         return sum(1 for _ in self._get_all_files(source))
+    
+    def _generate_backup_folder_name(self, mode: BackupMode) -> str:
+        """Generate backup folder name with format: Type_DayOfWeek_Day_Month."""
+        now = datetime.now()
+        
+        # Mode name
+        mode_names = {
+            BackupMode.FULL: "Completo",
+            BackupMode.INCREMENTAL: "Incremental",
+            BackupMode.DIFFERENTIAL: "Diferencial"
+        }
+        mode_name = mode_names.get(mode, mode.value)
+        
+        # Day of week (0=Monday)
+        day_of_week = DAYS_ES[now.weekday()]
+        
+        # Day number
+        day_num = now.day
+        
+        # Month name
+        month_name = MONTHS_ES[now.month]
+        
+        # Time for uniqueness
+        time_str = now.strftime("%H%M")
+        
+        return f"{mode_name}_{day_of_week}_{day_num}_{month_name}_{time_str}"
     
     def _should_copy_file(
         self, 
@@ -184,8 +235,10 @@ class BackupEngine:
                 error_message="Source folder does not exist"
             )
         
-        # Create destination if needed
-        dest_path.mkdir(parents=True, exist_ok=True)
+        # Create backup folder with descriptive name
+        backup_folder_name = self._generate_backup_folder_name(mode)
+        backup_path = dest_path / backup_folder_name
+        backup_path.mkdir(parents=True, exist_ok=True)
         
         # Create backup session
         session_id = self._db.create_session(source, destination, mode.value)
@@ -218,6 +271,13 @@ class BackupEngine:
                     error_msg = "no_full_backup" if mode == BackupMode.DIFFERENTIAL else "no_previous_backup"
                     # For now, we'll proceed as full backup
                     reference_files = {}
+            
+            # Copy empty directories for full backup
+            if mode == BackupMode.FULL:
+                for source_dir in self._get_all_directories(source_path):
+                    relative_dir = source_dir.relative_to(source_path)
+                    dest_dir = backup_path / relative_dir
+                    dest_dir.mkdir(parents=True, exist_ok=True)
             
             # Process files
             file_hashes_batch: List[Tuple[str, str, int, datetime]] = []
@@ -257,7 +317,7 @@ class BackupEngine:
                 
                 if should_copy and file_hash:
                     # Copy file
-                    dest_file = dest_path / relative_path
+                    dest_file = backup_path / relative_path
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
                     
                     try:
@@ -332,7 +392,8 @@ class BackupEngine:
                 files_copied=progress.files_copied,
                 files_skipped=progress.files_skipped,
                 bytes_copied=progress.bytes_copied,
-                duration_seconds=duration
+                duration_seconds=duration,
+                backup_folder=str(backup_path)
             )
             
         except Exception as e:
@@ -364,6 +425,128 @@ class BackupEngine:
         """Check if any backup exists for the given source."""
         session = self._db.get_last_session(source)
         return session is not None
+    
+    def run_restore(
+        self,
+        backup_folder: str,
+        destination: str,
+        progress_callback: Optional[ProgressCallback] = None
+    ) -> RestoreResult:
+        """
+        Restore files from a backup folder to a destination.
+        
+        Args:
+            backup_folder: Path to the backup folder to restore from
+            destination: Destination directory path
+            progress_callback: Optional callback for progress updates
+        
+        Returns:
+            RestoreResult with operation details
+        """
+        self._reset_cancel()
+        start_time = datetime.now()
+        
+        backup_path = Path(backup_folder)
+        dest_path = Path(destination)
+        
+        # Initialize progress
+        progress = BackupProgress()
+        
+        def update_progress():
+            if progress_callback:
+                progress_callback(progress)
+        
+        # Validate backup folder
+        if not backup_path.exists():
+            return RestoreResult(
+                success=False,
+                files_total=0,
+                files_restored=0,
+                files_skipped=0,
+                bytes_restored=0,
+                duration_seconds=0,
+                error_message="Backup folder does not exist"
+            )
+        
+        # Create destination if needed
+        dest_path.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Count files in backup
+            progress.files_total = self._count_files(backup_path)
+            update_progress()
+            
+            # First, copy all directories (including empty ones)
+            for source_dir in self._get_all_directories(backup_path):
+                relative_dir = source_dir.relative_to(backup_path)
+                dest_dir = dest_path / relative_dir
+                dest_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy all files
+            files_restored = 0
+            files_skipped = 0
+            bytes_restored = 0
+            
+            for backup_file in self._get_all_files(backup_path):
+                # Check for cancellation
+                if self._is_cancelled():
+                    duration = (datetime.now() - start_time).total_seconds()
+                    return RestoreResult(
+                        success=False,
+                        files_total=progress.files_total,
+                        files_restored=files_restored,
+                        files_skipped=files_skipped,
+                        bytes_restored=bytes_restored,
+                        duration_seconds=duration,
+                        error_message="Restore cancelled by user"
+                    )
+                
+                relative_path = backup_file.relative_to(backup_path)
+                dest_file = dest_path / relative_path
+                
+                progress.current_file = str(relative_path)
+                update_progress()
+                
+                try:
+                    # Create parent directories
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Copy file
+                    shutil.copy2(backup_file, dest_file)
+                    file_size = backup_file.stat().st_size
+                    files_restored += 1
+                    bytes_restored += file_size
+                    
+                except (IOError, OSError, PermissionError):
+                    files_skipped += 1
+                
+                progress.files_processed += 1
+                progress.files_copied = files_restored
+                progress.files_skipped = files_skipped
+                progress.bytes_copied = bytes_restored
+                update_progress()
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            return RestoreResult(
+                success=True,
+                files_total=progress.files_total,
+                files_restored=files_restored,
+                files_skipped=files_skipped,
+                bytes_restored=bytes_restored,
+                duration_seconds=duration
+            )
+            
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            return RestoreResult(
+                success=False,
+                files_total=progress.files_total,
+                files_restored=0,
+                files_skipped=0,
+                bytes_restored=0,
+                duration_seconds=duration,
+                error_message=str(e)
+            )
 
 
 # Global engine instance
