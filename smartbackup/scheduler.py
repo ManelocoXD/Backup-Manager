@@ -47,6 +47,11 @@ class ScheduleConfig:
     # Interval settings (for hourly)
     hour_interval: int = 1  # Every N hours
     
+    # Compression and encryption settings
+    compress: bool = False  # ZIP compression
+    encrypt: bool = False  # AES encryption
+    encryption_password: str = ""  # Password for encryption
+    
     # Next run tracking
     next_run: Optional[str] = None
     last_run: Optional[str] = None
@@ -66,6 +71,9 @@ class ScheduleConfig:
             "days_of_week": self.days_of_week,
             "day_of_month": self.day_of_month,
             "hour_interval": self.hour_interval,
+            "compress": self.compress,
+            "encrypt": self.encrypt,
+            "encryption_password": self.encryption_password,
             "next_run": self.next_run,
             "last_run": self.last_run,
             "last_result": self.last_result,
@@ -81,6 +89,12 @@ class ScheduleConfig:
             data["hour_interval"] = 1
         if "days_of_week" not in data:
             data["days_of_week"] = [0]
+        if "compress" not in data:
+            data["compress"] = False
+        if "encrypt" not in data:
+            data["encrypt"] = False
+        if "encryption_password" not in data:
+            data["encryption_password"] = ""
         return cls(**data)
 
 
@@ -354,6 +368,31 @@ class BackupScheduler:
             mode,
             self._on_progress
         )
+        
+        # Apply compression and/or encryption if backup was successful
+        if result.success and result.backup_folder and (schedule.compress or schedule.encrypt):
+            try:
+                from .backup_utils import compress_folder, encrypt_file
+                import shutil
+                import os
+                
+                backup_path = result.backup_folder
+                
+                if schedule.compress or schedule.encrypt:
+                    # Always create a zip for compression or encryption
+                    zip_path = backup_path + ".zip"
+                    compress_folder(backup_path, zip_path)
+                    
+                    if schedule.encrypt and schedule.encryption_password:
+                        # Encrypt the zip file
+                        enc_path = backup_path + ".zip.enc"
+                        encrypt_file(zip_path, enc_path, schedule.encryption_password)
+                        os.remove(zip_path)  # Remove unencrypted zip
+                    
+                    # Remove original backup folder since we have compressed/encrypted version
+                    shutil.rmtree(backup_path)
+            except Exception as e:
+                print(f"Post-processing error: {e}")
         
         # Update schedule
         with self._lock:

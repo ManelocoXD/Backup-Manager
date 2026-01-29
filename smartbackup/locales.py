@@ -509,6 +509,10 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Settings saved successfully",
         "es": "Configuración guardada exitosamente"
     },
+    "advanced_options": {
+        "en": "Advanced Options",
+        "es": "Opciones Avanzadas"
+    },
 }
 
 

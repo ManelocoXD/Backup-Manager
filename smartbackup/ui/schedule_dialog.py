@@ -371,6 +371,79 @@ class ScheduleDialog(ctk.CTkToplevel):
         )
         enabled_switch.pack(padx=15, pady=15)
         
+        # === ADVANCED OPTIONS (Compression/Encryption) ===
+        advanced_card = ctk.CTkFrame(
+            container,
+            fg_color=self._colors["surface"],
+            corner_radius=12
+        )
+        advanced_card.pack(fill="x", pady=(0, 15))
+        
+        advanced_header = ctk.CTkLabel(
+            advanced_card,
+            text="⚙️ " + self._("advanced_options"),
+            font=ctk.CTkFont(size=15, weight="bold"),
+            anchor="w"
+        )
+        advanced_header.pack(fill="x", padx=15, pady=(12, 8))
+        
+        # Compression option
+        self._compress_var = ctk.BooleanVar(value=False)
+        compress_check = ctk.CTkCheckBox(
+            advanced_card,
+            text="📦 " + self._("enable_compression"),
+            variable=self._compress_var,
+            font=ctk.CTkFont(size=13),
+            checkbox_width=24,
+            checkbox_height=24
+        )
+        compress_check.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Encryption option
+        self._encrypt_var = ctk.BooleanVar(value=False)
+        encrypt_check = ctk.CTkCheckBox(
+            advanced_card,
+            text="🔐 " + self._("enable_encryption"),
+            variable=self._encrypt_var,
+            command=self._on_encrypt_toggle,
+            font=ctk.CTkFont(size=13),
+            checkbox_width=24,
+            checkbox_height=24
+        )
+        encrypt_check.pack(fill="x", padx=15, pady=(0, 5))
+        
+        # Password frame (hidden by default)
+        self._password_frame = ctk.CTkFrame(advanced_card, fg_color="transparent")
+        
+        pwd_label = ctk.CTkLabel(
+            self._password_frame,
+            text=self._("encryption_password") + ":",
+            font=ctk.CTkFont(size=12),
+            anchor="w"
+        )
+        pwd_label.pack(fill="x", padx=0, pady=(5, 2))
+        
+        self._password_entry = ctk.CTkEntry(
+            self._password_frame,
+            height=38,
+            corner_radius=8,
+            show="•",
+            placeholder_text=self._("enter_password")
+        )
+        self._password_entry.pack(fill="x", pady=(0, 5))
+        
+        self._confirm_entry = ctk.CTkEntry(
+            self._password_frame,
+            height=38,
+            corner_radius=8,
+            show="•",
+            placeholder_text=self._("confirm_password")
+        )
+        self._confirm_entry.pack(fill="x")
+        
+        # Spacing at end
+        ctk.CTkLabel(advanced_card, text="", height=5).pack()
+        
         # === ACTION BUTTONS ===
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(5, 0))
@@ -482,6 +555,14 @@ class ScheduleDialog(ctk.CTkToplevel):
         # Enabled
         self._enabled_var.set(self._schedule.enabled)
         
+        # Compression and encryption
+        self._compress_var.set(self._schedule.compress)
+        self._encrypt_var.set(self._schedule.encrypt)
+        if self._schedule.encrypt and self._schedule.encryption_password:
+            self._password_entry.insert(0, self._schedule.encryption_password)
+            self._confirm_entry.insert(0, self._schedule.encryption_password)
+            self._on_encrypt_toggle()
+        
         # Update visibility
         self._on_frequency_change(self._freq_var.get())
     
@@ -554,7 +635,31 @@ class ScheduleDialog(ctk.CTkToplevel):
             messagebox.showerror(self._("app_title"), self._("error_no_destination"))
             return False
         
+        # Validate encryption password
+        if self._encrypt_var.get():
+            pwd = self._password_entry.get()
+            confirm = self._confirm_entry.get()
+            
+            if not pwd:
+                messagebox.showerror(self._("app_title"), self._("password_required"))
+                return False
+            
+            if pwd != confirm:
+                messagebox.showerror(self._("app_title"), self._("passwords_not_match"))
+                return False
+            
+            if len(pwd) < 8:
+                messagebox.showerror(self._("app_title"), self._("password_too_short"))
+                return False
+        
         return True
+    
+    def _on_encrypt_toggle(self):
+        """Handle encryption checkbox toggle."""
+        if self._encrypt_var.get():
+            self._password_frame.pack(fill="x", padx=15, pady=(0, 10))
+        else:
+            self._password_frame.pack_forget()
     
     def _save_schedule(self):
         """Save the schedule."""
@@ -577,6 +682,9 @@ class ScheduleDialog(ctk.CTkToplevel):
             days_of_week=self._get_days_of_week(),
             day_of_month=int(self._dom_var.get()),
             hour_interval=int(self._interval_var.get()),
+            compress=self._compress_var.get(),
+            encrypt=self._encrypt_var.get(),
+            encryption_password=self._password_entry.get() if self._encrypt_var.get() else "",
         )
         
         # Save to scheduler
