@@ -260,8 +260,9 @@ class RestoreProgressWindow(ctk.CTkToplevel):
         # Handle window close
         self.protocol("WM_DELETE_WINDOW", self._handle_close)
         
-        # Modal behavior
-        self.grab_set()
+        # Non-modal behavior (to avoid blocking errors), but force focus
+        self.lift()
+        self.focus_force()
     
     def _(self, key: str, **kwargs) -> str:
         """Get localized string."""
@@ -324,7 +325,8 @@ class RestoreProgressWindow(ctk.CTkToplevel):
             content,
             text="",
             font=ctk.CTkFont(size=13),
-            anchor="w"
+            anchor="w",
+            wraplength=460  # Wrap long error messages
         )
         self._stats_label.pack(fill="x", pady=(10, 0))
         
@@ -393,7 +395,10 @@ class RestoreProgressWindow(ctk.CTkToplevel):
                 text_color=self._colors["danger"]
             )
             self._progress_bar.configure(progress_color=self._colors["danger"])
-            self._stats_label.configure(text=message or result.error_message or "")
+            
+            # Ensure error message is visible and wrapped
+            error_text = message or result.error_message or "Unknown error"
+            self._stats_label.configure(text=error_text, text_color=self._colors["danger"])
             
         # Show close button
         self._close_btn.pack(pady=(15, 0))

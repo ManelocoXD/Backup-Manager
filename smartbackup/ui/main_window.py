@@ -712,6 +712,8 @@ class MainWindow(ctk.CTk):
             lang=self._config.language,
             on_close=self._cancel_restore
         )
+        self._restore_window.update()  # Force render
+        
         
         # Start restore in thread
         self._backup_thread = threading.Thread(
