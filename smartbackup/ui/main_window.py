@@ -761,11 +761,7 @@ class MainWindow(ctk.CTk):
                     
                     if not decrypt_file(backup_source, zip_path, password):
                         error_msg = self._("decrypt_failed")
-                        
-                        # Explicitly show error on main thread
-                        self.after(0, lambda: messagebox.showerror(self._("app_title"), error_msg))
-                        
-                        # Create failure result
+                        # Pass failure to handle_result, do NOT show messagebox here to avoid conflict
                         fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                         self.after(0, lambda: self._handle_restore_result(fail_result))
                         return
@@ -783,7 +779,6 @@ class MainWindow(ctk.CTk):
                 
                 if not decompress_folder(backup_source, extract_dir):
                     error_msg = self._("decompress_failed")
-                    self.after(0, lambda: messagebox.showerror(self._("app_title"), error_msg))
                     fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                     self.after(0, lambda: self._handle_restore_result(fail_result))
                     return
@@ -817,6 +812,7 @@ class MainWindow(ctk.CTk):
     def _handle_restore_result(self, result):
         """Handle restore completion."""
         from .backup_engine import RestoreResult
+        from tkinter import messagebox
         
         self._is_running = False
         
@@ -826,7 +822,9 @@ class MainWindow(ctk.CTk):
         self._progress_bar.set(1 if result.success else 0)
         
         # Update popup window if exists
+        window_active = False
         if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+            window_active = True
             msg = ""
             if not result.success and result.error_message:
                 msg = result.error_message
@@ -844,8 +842,12 @@ class MainWindow(ctk.CTk):
             stats += f" | {format_bytes(result.bytes_restored)} | {format_duration(result.duration_seconds)}"
             self._stats_label.configure(text=stats)
             
-            # Popup already shows success, maybe don't need double popup?
-            # But duplicate is safer to ensure user sees it if they closed one
+            # Only show messagebox if window is NOT active (prevent duplicate)
+            if not window_active:
+                messagebox.showinfo(
+                    self._("restore"),
+                    self._("restore_complete") + f"\n\n{stats}"
+                )
             
         elif result.error_message and "cancelled" in result.error_message.lower():
             self._status_label.configure(
@@ -857,6 +859,12 @@ class MainWindow(ctk.CTk):
                 text=self._("status_error"),
                 text_color=self._colors["danger"]
             )
+            # Only show messagebox if window is NOT active (precent modal conflict)
+            if not window_active:
+                messagebox.showerror(
+                    self._("restore"),
+                    f"{self._('status_error')}\n\n{result.error_message}"
+                )
     
     def _show_settings(self):
         """Show the settings dialog."""
