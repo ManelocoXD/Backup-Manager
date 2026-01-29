@@ -696,6 +696,7 @@ class MainWindow(ctk.CTk):
     def _start_restore(self, backup_source: str, restore_dest: str, password: str = None):
         """Start the restore operation."""
         from .backup_engine import RestoreResult
+        from .progress_window import RestoreProgressWindow
         
         # Switch UI to running state
         self._is_running = True
@@ -706,6 +707,12 @@ class MainWindow(ctk.CTk):
         self._status_label.configure(text=self._("restoring"))
         self._file_label.configure(text="")
         
+        # Create progress window
+        self._restore_window = RestoreProgressWindow(
+            lang=self._config.language,
+            on_close=self._cancel_restore
+        )
+        
         # Start restore in thread
         self._backup_thread = threading.Thread(
             target=self._run_restore_thread,
@@ -713,6 +720,11 @@ class MainWindow(ctk.CTk):
             daemon=True
         )
         self._backup_thread.start()
+    
+    def _cancel_restore(self):
+        """Cancel the restore operation."""
+        if self._engine:
+            self._engine.cancel()
     
     def _run_restore_thread(self, backup_source: str, restore_dest: str, password: str = None):
         """Run restore in background thread."""
@@ -722,6 +734,9 @@ class MainWindow(ctk.CTk):
         import shutil
         
         def on_progress(progress: BackupProgress):
+            if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+                self.after(0, lambda: self._restore_window.update_progress(progress))
+            # Also update main UI as backup
             self.after(0, lambda: self._update_progress(progress))
         
         backup_folder = backup_source
@@ -731,17 +746,25 @@ class MainWindow(ctk.CTk):
         try:
             # Handle compressed/encrypted files
             if backup_source.endswith(".enc") or backup_source.endswith(".zip"):
+                from ..backup_utils import decrypt_file, decompress_folder
+                
                 temp_dir = tempfile.mkdtemp()
                 
                 if backup_source.endswith(".enc"):
                     # Decrypt first
-                    self.after(0, lambda: self._status_label.configure(text=self._("decrypting")))
+                    msg = self._("decrypting")
+                    self.after(0, lambda: self._status_label.configure(text=msg))
+                    if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+                        self.after(0, lambda: self._restore_window.set_status(msg))
+                        
                     zip_path = os.path.join(temp_dir, "backup.zip")
                     
                     if not decrypt_file(backup_source, zip_path, password):
                         error_msg = self._("decrypt_failed")
+                        
                         # Explicitly show error on main thread
                         self.after(0, lambda: messagebox.showerror(self._("app_title"), error_msg))
+                        
                         # Create failure result
                         fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                         self.after(0, lambda: self._handle_restore_result(fail_result))
@@ -750,7 +773,11 @@ class MainWindow(ctk.CTk):
                     backup_source = zip_path
                 
                 # Decompress
-                self.after(0, lambda: self._status_label.configure(text=self._("decompressing")))
+                msg = self._("decompressing")
+                self.after(0, lambda: self._status_label.configure(text=msg))
+                if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+                    self.after(0, lambda: self._restore_window.set_status(msg))
+                    
                 extract_dir = os.path.join(temp_dir, "extracted")
                 os.makedirs(extract_dir)
                 
@@ -764,7 +791,11 @@ class MainWindow(ctk.CTk):
                 backup_folder = extract_dir
             
             # Run the actual restore
-            self.after(0, lambda: self._status_label.configure(text=self._("restoring")))
+            msg = self._("restoring")
+            self.after(0, lambda: self._status_label.configure(text=msg))
+            if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+                self.after(0, lambda: self._restore_window.set_status(msg))
+                
             result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
             self.after(0, lambda: self._handle_restore_result(result))
             
@@ -794,6 +825,13 @@ class MainWindow(ctk.CTk):
         self._backup_btn.pack(fill="x")
         self._progress_bar.set(1 if result.success else 0)
         
+        # Update popup window if exists
+        if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
+            msg = ""
+            if not result.success and result.error_message:
+                msg = result.error_message
+            self._restore_window.show_complete(result, result.success, msg)
+        
         if result.success:
             self._status_label.configure(
                 text=self._("restore_complete"),
@@ -806,10 +844,9 @@ class MainWindow(ctk.CTk):
             stats += f" | {format_bytes(result.bytes_restored)} | {format_duration(result.duration_seconds)}"
             self._stats_label.configure(text=stats)
             
-            messagebox.showinfo(
-                self._("restore"),
-                self._("restore_complete") + f"\n\n{stats}"
-            )
+            # Popup already shows success, maybe don't need double popup?
+            # But duplicate is safer to ensure user sees it if they closed one
+            
         elif result.error_message and "cancelled" in result.error_message.lower():
             self._status_label.configure(
                 text=self._("restore_cancelled"),
@@ -819,10 +856,6 @@ class MainWindow(ctk.CTk):
             self._status_label.configure(
                 text=self._("status_error"),
                 text_color=self._colors["danger"]
-            )
-            messagebox.showerror(
-                self._("restore"),
-                f"{self._('status_error')}\n\n{result.error_message}"
             )
     
     def _show_settings(self):

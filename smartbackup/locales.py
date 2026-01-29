@@ -541,6 +541,14 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Failed to decompress backup file.",
         "es": "Error al descomprimir el archivo de backup."
     },
+    "preparing": {
+        "en": "Preparing...",
+        "es": "Preparando..."
+    },
+    "files_restored": {
+        "en": "{count} files restored",
+        "es": "{count} archivos restaurados"
+    },
 }
 
 

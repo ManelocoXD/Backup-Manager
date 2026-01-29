@@ -12,6 +12,7 @@ from ..backup_engine import BackupProgress, BackupResult
 from ..locales import get_string
 
 
+
 class ScheduledBackupWindow(ctk.CTkToplevel):
     """Small notification window for scheduled backup progress."""
     
@@ -213,6 +214,204 @@ class ScheduledBackupWindow(ctk.CTkToplevel):
         self.destroy()
 
 
+class RestoreProgressWindow(ctk.CTkToplevel):
+    """notification window for restore progress."""
+    
+    def __init__(
+        self,
+        lang: str = "es",
+        on_close: Optional[Callable] = None
+    ):
+        super().__init__()
+        
+        self._lang = lang
+        self._on_close = on_close
+        self._is_complete = False
+        
+        # Window setup
+        self.title("SmartBackup - Restaurar")
+        self.geometry("500x250")
+        self.resizable(False, False)
+        
+        # Keep on top
+        self.attributes("-topmost", True)
+        
+        # Center on screen
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - 500) // 2
+        y = (screen_height - 250) // 2
+        self.geometry(f"500x250+{x}+{y}")
+        
+        # Colors
+        self._colors = {
+            "primary": "#3B82F6",
+            "success": "#22C55E",
+            "warning": "#F59E0B",
+            "danger": "#EF4444",
+            "surface": "#1E293B",
+            "text": "#F8FAFC",
+            "text_dim": "#94A3B8"
+        }
+        
+        self._create_widgets()
+        
+        # Handle window close
+        self.protocol("WM_DELETE_WINDOW", self._handle_close)
+        
+        # Modal behavior
+        self.grab_set()
+    
+    def _(self, key: str, **kwargs) -> str:
+        """Get localized string."""
+        return get_string(key, self._lang, **kwargs)
+    
+    def _create_widgets(self):
+        """Create the window widgets."""
+        # Main container
+        main_frame = ctk.CTkFrame(self, fg_color=self._colors["surface"])
+        main_frame.pack(fill="both", expand=True, padx=2, pady=2)
+        
+        # Header
+        header = ctk.CTkFrame(main_frame, fg_color=self._colors["primary"], height=50)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        
+        header_label = ctk.CTkLabel(
+            header,
+            text=f"📂 {self._('restoring')}",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        header_label.pack(side="left", padx=15, pady=10)
+        
+        # Content
+        content = ctk.CTkFrame(main_frame, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Status label
+        self._status_label = ctk.CTkLabel(
+            content,
+            text=self._("preparing"),
+            font=ctk.CTkFont(size=15),
+            anchor="w"
+        )
+        self._status_label.pack(fill="x", pady=(0, 10))
+        
+        # Progress bar
+        self._progress_bar = ctk.CTkProgressBar(
+            content,
+            height=15,
+            corner_radius=7,
+            progress_color=self._colors["primary"]
+        )
+        self._progress_bar.pack(fill="x", pady=(0, 10))
+        self._progress_bar.set(0)
+        
+        # File label
+        self._file_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=ctk.CTkFont(size=12),
+            text_color=self._colors["text_dim"],
+            anchor="w"
+        )
+        self._file_label.pack(fill="x")
+        
+        # Stats label
+        self._stats_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=ctk.CTkFont(size=13),
+            anchor="w"
+        )
+        self._stats_label.pack(fill="x", pady=(10, 0))
+        
+        # Close button (hidden initially)
+        self._close_btn = ctk.CTkButton(
+            content,
+            text="Cerrar",
+            command=self._handle_close,
+            width=100,
+            fg_color=self._colors["surface"],
+            border_width=1,
+            border_color=self._colors["text_dim"]
+        )
+    
+    def set_status(self, text: str):
+        """Update status text."""
+        self._status_label.configure(text=text)
+    
+    def update_progress(self, progress: BackupProgress):
+        """Update the progress display."""
+        if self._is_complete:
+            return
+        
+        # Update progress bar
+        percent = progress.progress_percent / 100
+        self._progress_bar.set(percent)
+        
+        # Update status
+        status_text = f"{progress.files_processed}/{progress.files_total} - "
+        # Use files_copied as files_restored for restore operations
+        status_text += self._("files_restored", count=progress.files_copied)
+            
+        self._status_label.configure(text=status_text)
+        
+        # Update current file (truncate if too long)
+        file_text = progress.current_file
+        if len(file_text) > 60:
+            file_text = "..." + file_text[-57:]
+        self._file_label.configure(text=file_text)
+    
+    def show_complete(self, result, success: bool, message: str = ""):
+        """Show completion status."""
+        self._is_complete = True
+        
+        # Update UI
+        self._progress_bar.set(1)
+        
+        if success:
+            self._status_label.configure(
+                text=self._("restore_complete"),
+                text_color=self._colors["success"]
+            )
+            self._progress_bar.configure(progress_color=self._colors["success"])
+            
+            # Show stats if available
+            if hasattr(result, 'files_restored'):
+                stats = f"✅ {self._('files_restored', count=result.files_restored)}"
+                if result.files_skipped > 0:
+                    stats += f" | ⏭️ {result.files_skipped}"
+                self._stats_label.configure(text=stats)
+                
+            # Play sound or flash?
+        else:
+            self._status_label.configure(
+                text=self._("status_error"),
+                text_color=self._colors["danger"]
+            )
+            self._progress_bar.configure(progress_color=self._colors["danger"])
+            self._stats_label.configure(text=message or result.error_message or "")
+            
+        # Show close button
+        self._close_btn.pack(pady=(15, 0))
+    
+    def _handle_close(self):
+        """Handle window close."""
+        if not self._is_complete:
+            # If closed while running, we might want to cancel?
+            # For now just hide
+            pass
+            
+        if self._on_close:
+            self._on_close()
+        
+        self.grab_release()
+        self.destroy()
+
+
 def create_scheduled_backup_window(
     schedule_name: str,
     lang: str = "es"
@@ -220,3 +419,4 @@ def create_scheduled_backup_window(
     """Create a new scheduled backup progress window."""
     window = ScheduledBackupWindow(schedule_name, lang)
     return window
+
