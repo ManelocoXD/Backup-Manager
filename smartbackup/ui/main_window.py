@@ -40,7 +40,7 @@ class MainWindow(ctk.CTk):
         self._colors = get_colors(self._theme)
         
         # Window setup
-        self.title(self._("app_title"))
+        self.title("SmartBackup Local v1.1.0 [FIXED]")
         self.geometry("700x600")
         self.minsize(600, 500)
         

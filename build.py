@@ -19,6 +19,18 @@ def build_windows():
     project_root = Path(__file__).parent
     os.chdir(project_root)
     
+    # Aggressive Cleanup
+    print("🧹 Cleaning previous builds...")
+    import shutil
+    for folder in ['build', 'dist']:
+        path = project_root / folder
+        if path.exists():
+            try:
+                shutil.rmtree(path)
+                print(f"   Removed {folder}/")
+            except Exception as e:
+                print(f"   ⚠️ Could not remove {folder}/: {e}")
+    
     # Check if PyInstaller is installed
     try:
         import PyInstaller
