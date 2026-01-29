@@ -715,7 +715,7 @@ class MainWindow(ctk.CTk):
     
     def _run_restore_thread(self, backup_source: str, restore_dest: str, password: str = None):
         """Run restore in background thread."""
-        from .backup_engine import BackupProgress
+        from .backup_engine import BackupProgress, RestoreResult
         from tkinter import messagebox
         import tempfile
         import os
@@ -726,6 +726,7 @@ class MainWindow(ctk.CTk):
         
         backup_folder = backup_source
         temp_dir = None
+        error_msg = None
         
         try:
             # Handle compressed/encrypted files
@@ -740,10 +741,12 @@ class MainWindow(ctk.CTk):
                     zip_path = os.path.join(temp_dir, "backup.zip")
                     
                     if not decrypt_file(backup_source, zip_path, password):
-                        self.after(0, lambda: messagebox.showerror(
-                            self._("app_title"),
-                            self._("decrypt_failed")
-                        ))
+                        error_msg = self._("decrypt_failed")
+                        # Explicitly show error on main thread
+                        self.after(0, lambda: messagebox.showerror(self._("app_title"), error_msg))
+                        # Create failure result
+                        fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
+                        self.after(0, lambda: self._handle_restore_result(fail_result))
                         return
                     
                     backup_source = zip_path
@@ -754,10 +757,10 @@ class MainWindow(ctk.CTk):
                 os.makedirs(extract_dir)
                 
                 if not decompress_folder(backup_source, extract_dir):
-                    self.after(0, lambda: messagebox.showerror(
-                        self._("app_title"),
-                        self._("decompress_failed")
-                    ))
+                    error_msg = self._("decompress_failed")
+                    self.after(0, lambda: messagebox.showerror(self._("app_title"), error_msg))
+                    fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
+                    self.after(0, lambda: self._handle_restore_result(fail_result))
                     return
                 
                 backup_folder = extract_dir
@@ -766,6 +769,13 @@ class MainWindow(ctk.CTk):
             self.after(0, lambda: self._status_label.configure(text=self._("restoring")))
             result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
             self.after(0, lambda: self._handle_restore_result(result))
+            
+        except Exception as e:
+            # Catch unexpected errors to preventing hanging UI
+            print(f"Restore thread error: {e}")
+            error_msg = str(e)
+            fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
+            self.after(0, lambda: self._handle_restore_result(fail_result))
             
         finally:
             # Clean up temp directory
