@@ -22,11 +22,14 @@ if application_path not in sys.path:
 
 def main():
     """Main entry point."""
+    # Check for background mode
+    background_mode = "--background" in sys.argv or "-b" in sys.argv
+    
     # Import here to ensure path is set up
     from smartbackup.ui.main_window import MainWindow
     
     # Create and run application
-    app = MainWindow()
+    app = MainWindow(start_minimized=background_mode)
     app.mainloop()
 
 

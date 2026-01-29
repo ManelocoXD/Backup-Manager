@@ -439,6 +439,76 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Select Days",
         "es": "Seleccionar Días"
     },
+    
+    # Settings
+    "settings": {
+        "en": "Settings",
+        "es": "Configuración"
+    },
+    "startup_settings": {
+        "en": "Startup",
+        "es": "Inicio Automático"
+    },
+    "start_with_windows": {
+        "en": "Start SmartBackup with Windows",
+        "es": "Iniciar SmartBackup con Windows"
+    },
+    "startup_desc": {
+        "en": "Run in background when computer starts for scheduled backups",
+        "es": "Ejecutar en segundo plano al iniciar el PC para backups programados"
+    },
+    "compression_settings": {
+        "en": "Compression",
+        "es": "Compresión"
+    },
+    "enable_compression": {
+        "en": "Compress backups (ZIP)",
+        "es": "Comprimir backups (ZIP)"
+    },
+    "compression_desc": {
+        "en": "Reduce backup size by compressing files",
+        "es": "Reducir tamaño del backup comprimiendo archivos"
+    },
+    "encryption_settings": {
+        "en": "Encryption",
+        "es": "Cifrado"
+    },
+    "enable_encryption": {
+        "en": "Encrypt backups (AES-256)",
+        "es": "Cifrar backups (AES-256)"
+    },
+    "encryption_desc": {
+        "en": "Protect your backups with a password",
+        "es": "Proteger tus backups con una contraseña"
+    },
+    "encryption_password": {
+        "en": "Password",
+        "es": "Contraseña"
+    },
+    "enter_password": {
+        "en": "Enter password...",
+        "es": "Ingresa contraseña..."
+    },
+    "confirm_password": {
+        "en": "Confirm password",
+        "es": "Confirmar contraseña"
+    },
+    "password_required": {
+        "en": "Password is required for encryption",
+        "es": "La contraseña es requerida para el cifrado"
+    },
+    "passwords_not_match": {
+        "en": "Passwords do not match",
+        "es": "Las contraseñas no coinciden"
+    },
+    "password_too_short": {
+        "en": "Password must be at least 8 characters",
+        "es": "La contraseña debe tener al menos 8 caracteres"
+    },
+    "settings_saved": {
+        "en": "Settings saved successfully",
+        "es": "Configuración guardada exitosamente"
+    },
 }
 
 

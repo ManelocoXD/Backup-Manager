@@ -21,8 +21,10 @@ from .schedule_dialog import ScheduleListDialog
 class MainWindow(ctk.CTk):
     """Main application window."""
     
-    def __init__(self):
+    def __init__(self, start_minimized: bool = False):
         super().__init__()
+        
+        self._start_minimized = start_minimized
         
         # Configuration
         self._config = get_config()
@@ -73,6 +75,10 @@ class MainWindow(ctk.CTk):
         
         # Handle window close - minimize to tray instead of exit
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
+        
+        # Start minimized if requested
+        if self._start_minimized:
+            self.after(100, self._minimize_to_tray)
     
     def _create_widgets(self):
         """Create all UI widgets with premium design."""
@@ -170,6 +176,21 @@ class MainWindow(ctk.CTk):
             font=ctk.CTkFont(size=14, weight="bold")
         )
         restore_btn.pack(side="left", padx=(0, 10))
+        
+        # Settings button
+        settings_btn = ctk.CTkButton(
+            actions_frame,
+            text="⚙️",
+            command=self._show_settings,
+            width=42,
+            height=42,
+            corner_radius=10,
+            fg_color="#5A9BF8",
+            hover_color="#7AABF8",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=18)
+        )
+        settings_btn.pack(side="left", padx=(0, 10))
         
         # Help button - subtle
         help_btn = ctk.CTkButton(
@@ -704,6 +725,11 @@ class MainWindow(ctk.CTk):
                 f"{self._('status_error')}\n\n{result.error_message}"
             )
     
+    def _show_settings(self):
+        """Show the settings dialog."""
+        from .settings_dialog import SettingsDialog
+        SettingsDialog(self, self._)
+    
     def _setup_scheduler_callbacks(self):
         """Setup callbacks for scheduled backup events."""
         self._scheduler.set_callbacks(
@@ -796,3 +822,9 @@ class MainWindow(ctk.CTk):
         
         # Destroy window
         self.destroy()
+    
+    def _minimize_to_tray(self):
+        """Minimize window to system tray."""
+        if self._tray:
+            self.withdraw()
+            self._tray.update_tooltip("SmartBackup - En segundo plano")

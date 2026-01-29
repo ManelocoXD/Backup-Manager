@@ -48,6 +48,9 @@ class Config:
             "last_mode": "full",  # "full", "incremental", "differential"
             "show_notifications": True,
             "confirm_before_backup": True,
+            "enable_compression": False,
+            "enable_encryption": False,
+            "encryption_password": "",
         }
     
     def _detect_language(self) -> str:
@@ -81,6 +84,10 @@ class Config:
                 json.dump(self._settings, f, indent=2, ensure_ascii=False)
         except IOError as e:
             print(f"Warning: Could not save config: {e}")
+    
+    def save(self) -> None:
+        """Public method to save configuration."""
+        self._save()
     
     @property
     def config_dir(self) -> Path:
@@ -145,6 +152,30 @@ class Config:
     @last_mode.setter
     def last_mode(self, value: str) -> None:
         self.set("last_mode", value)
+    
+    @property
+    def enable_compression(self) -> bool:
+        return self.get("enable_compression", False)
+    
+    @enable_compression.setter
+    def enable_compression(self, value: bool) -> None:
+        self._settings["enable_compression"] = value
+    
+    @property
+    def enable_encryption(self) -> bool:
+        return self.get("enable_encryption", False)
+    
+    @enable_encryption.setter
+    def enable_encryption(self, value: bool) -> None:
+        self._settings["enable_encryption"] = value
+    
+    @property
+    def encryption_password(self) -> str:
+        return self.get("encryption_password", "")
+    
+    @encryption_password.setter
+    def encryption_password(self, value: str) -> None:
+        self._settings["encryption_password"] = value
 
 
 # Global config instance
@@ -157,3 +188,4 @@ def get_config() -> Config:
     if _config is None:
         _config = Config()
     return _config
+
