@@ -11,8 +11,9 @@ from typing import Optional
 
 from ..config import get_config
 from ..locales import Localizer
-from ..backup_engine import get_backup_engine, BackupMode, BackupProgress, BackupResult
+from ..backup_engine import get_backup_engine, BackupMode, BackupProgress, BackupResult, RestoreResult
 from ..scheduler import get_scheduler
+from ..backup_utils import decrypt_file, decompress_folder  # Import at module level
 from .theme import apply_theme, get_colors, format_bytes, format_duration
 from .help_dialog import HelpDialog
 from .schedule_dialog import ScheduleListDialog
@@ -715,7 +716,6 @@ class MainWindow(ctk.CTk):
     
     def _run_restore_thread(self, backup_source: str, restore_dest: str, password: str = None):
         """Run restore in background thread."""
-        from .backup_engine import BackupProgress, RestoreResult
         from tkinter import messagebox
         import tempfile
         import os
@@ -731,8 +731,6 @@ class MainWindow(ctk.CTk):
         try:
             # Handle compressed/encrypted files
             if backup_source.endswith(".enc") or backup_source.endswith(".zip"):
-                from ..backup_utils import decrypt_file, decompress_folder
-                
                 temp_dir = tempfile.mkdtemp()
                 
                 if backup_source.endswith(".enc"):
