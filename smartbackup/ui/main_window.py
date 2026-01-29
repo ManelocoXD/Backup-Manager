@@ -696,7 +696,6 @@ class MainWindow(ctk.CTk):
     def _start_restore(self, backup_source: str, restore_dest: str, password: str = None):
         """Start the restore operation."""
         from .backup_engine import RestoreResult
-        from .progress_window import RestoreProgressWindow
         
         # Switch UI to running state
         self._is_running = True
@@ -706,14 +705,6 @@ class MainWindow(ctk.CTk):
         self._progress_bar.set(0)
         self._status_label.configure(text=self._("restoring"))
         self._file_label.configure(text="")
-        
-        # Create progress window
-        self._restore_window = RestoreProgressWindow(
-            lang=self._config.language,
-            on_close=self._cancel_restore
-        )
-        self._restore_window.update()  # Force render
-        
         
         # Start restore in thread
         self._backup_thread = threading.Thread(
@@ -736,9 +727,7 @@ class MainWindow(ctk.CTk):
         import shutil
         
         def on_progress(progress: BackupProgress):
-            if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
-                self.after(0, lambda: self._restore_window.update_progress(progress))
-            # Also update main UI as backup
+            # Simple: only update main UI
             self.after(0, lambda: self._update_progress(progress))
         
         backup_folder = backup_source
@@ -756,14 +745,12 @@ class MainWindow(ctk.CTk):
                     # Decrypt first
                     msg = self._("decrypting")
                     self.after(0, lambda: self._status_label.configure(text=msg))
-                    if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
-                        self.after(0, lambda: self._restore_window.set_status(msg))
-                        
+                    self.after(0, lambda: self._file_label.configure(text="🔓 " + self._("decrypting")))
+                    
                     zip_path = os.path.join(temp_dir, "backup.zip")
                     
                     if not decrypt_file(backup_source, zip_path, password):
                         error_msg = self._("decrypt_failed")
-                        # Pass failure to handle_result, do NOT show messagebox here to avoid conflict
                         fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                         self.after(0, lambda: self._handle_restore_result(fail_result))
                         return
@@ -773,9 +760,8 @@ class MainWindow(ctk.CTk):
                 # Decompress
                 msg = self._("decompressing")
                 self.after(0, lambda: self._status_label.configure(text=msg))
-                if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
-                    self.after(0, lambda: self._restore_window.set_status(msg))
-                    
+                self.after(0, lambda: self._file_label.configure(text="📦 " + self._("decompressing")))
+                
                 extract_dir = os.path.join(temp_dir, "extracted")
                 os.makedirs(extract_dir)
                 
@@ -790,9 +776,8 @@ class MainWindow(ctk.CTk):
             # Run the actual restore
             msg = self._("restoring")
             self.after(0, lambda: self._status_label.configure(text=msg))
-            if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
-                self.after(0, lambda: self._restore_window.set_status(msg))
-                
+            self.after(0, lambda: self._file_label.configure(text="📂 " + self._("restoring")))
+            
             result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
             self.after(0, lambda: self._handle_restore_result(result))
             
@@ -822,15 +807,7 @@ class MainWindow(ctk.CTk):
         self._cancel_btn.pack_forget()
         self._backup_btn.pack(fill="x")
         self._progress_bar.set(1 if result.success else 0)
-        
-        # Update popup window if exists
-        window_active = False
-        if hasattr(self, '_restore_window') and self._restore_window.winfo_exists():
-            window_active = True
-            msg = ""
-            if not result.success and result.error_message:
-                msg = result.error_message
-            self._restore_window.show_complete(result, result.success, msg)
+        self._file_label.configure(text="")
         
         if result.success:
             self._status_label.configure(
@@ -844,12 +821,11 @@ class MainWindow(ctk.CTk):
             stats += f" | {format_bytes(result.bytes_restored)} | {format_duration(result.duration_seconds)}"
             self._stats_label.configure(text=stats)
             
-            # Only show messagebox if window is NOT active (prevent duplicate)
-            if not window_active:
-                messagebox.showinfo(
-                    self._("restore"),
-                    self._("restore_complete") + f"\n\n{stats}"
-                )
+            # Show success messagebox
+            messagebox.showinfo(
+                self._("restore"),
+                self._("restore_complete") + f"\n\n{stats}"
+            )
             
         elif result.error_message and "cancelled" in result.error_message.lower():
             self._status_label.configure(
@@ -861,12 +837,13 @@ class MainWindow(ctk.CTk):
                 text=self._("status_error"),
                 text_color=self._colors["danger"]
             )
-            # Only show messagebox if window is NOT active (precent modal conflict)
-            if not window_active:
-                messagebox.showerror(
-                    self._("restore"),
-                    f"{self._('status_error')}\n\n{result.error_message}"
-                )
+            self._stats_label.configure(text="")
+            
+            # Show error messagebox
+            messagebox.showerror(
+                self._("restore"),
+                f"{self._('status_error')}\n\n{result.error_message}"
+            )
     
     def _show_settings(self):
         """Show the settings dialog."""
