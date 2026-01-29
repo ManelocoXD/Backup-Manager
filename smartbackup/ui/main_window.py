@@ -624,15 +624,55 @@ class MainWindow(ctk.CTk):
         self._status_label.configure(text=self._("status_cancelled"))
     
     def _show_restore_dialog(self):
-        """Show dialog to select backup folder and restore destination."""
-        from tkinter import filedialog, messagebox
+        """Show dialog to select backup folder/file and restore destination."""
+        from tkinter import filedialog, messagebox, simpledialog
+        import os
         
-        # Select backup folder to restore from
-        backup_folder = filedialog.askdirectory(
-            title=self._("select_backup_folder")
+        # First, ask user what type of backup to restore
+        choice = messagebox.askyesnocancel(
+            self._("restore"),
+            self._("restore_type_question") if self._config.language == "es" else 
+            "Do you want to restore from an encrypted/compressed file?\n\n"
+            "Yes = Select .zip or .zip.enc file\n"
+            "No = Select folder (normal backup)\n"
+            "Cancel = Cancel"
         )
-        if not backup_folder:
+        
+        if choice is None:
             return
+        
+        backup_source = None
+        password = None
+        
+        if choice:  # User wants to restore from file
+            # Select backup file
+            backup_source = filedialog.askopenfilename(
+                title=self._("select_backup_file"),
+                filetypes=[
+                    ("Encrypted Backup", "*.enc"),
+                    ("Compressed Backup", "*.zip"),
+                    ("All files", "*.*")
+                ]
+            )
+            if not backup_source:
+                return
+            
+            # If encrypted, ask for password
+            if backup_source.endswith(".enc"):
+                password = simpledialog.askstring(
+                    self._("encryption_password"),
+                    self._("enter_decrypt_password"),
+                    show="•"
+                )
+                if not password:
+                    return
+        else:
+            # Select backup folder
+            backup_source = filedialog.askdirectory(
+                title=self._("select_backup_folder")
+            )
+            if not backup_source:
+                return
         
         # Select destination for restore
         restore_dest = filedialog.askdirectory(
@@ -644,15 +684,15 @@ class MainWindow(ctk.CTk):
         # Confirm restore
         confirm = messagebox.askyesno(
             self._("restore"),
-            f"{self._('select_backup_folder')}:\n{backup_folder}\n\n"
+            f"{self._('select_backup_folder')}:\n{backup_source}\n\n"
             f"{self._('select_restore_destination')}:\n{restore_dest}\n\n"
             f"¿Continuar con la restauración?"
         )
         
         if confirm:
-            self._start_restore(backup_folder, restore_dest)
+            self._start_restore(backup_source, restore_dest, password)
     
-    def _start_restore(self, backup_folder: str, restore_dest: str):
+    def _start_restore(self, backup_source: str, restore_dest: str, password: str = None):
         """Start the restore operation."""
         from .backup_engine import RestoreResult
         
@@ -668,20 +708,72 @@ class MainWindow(ctk.CTk):
         # Start restore in thread
         self._backup_thread = threading.Thread(
             target=self._run_restore_thread,
-            args=(backup_folder, restore_dest),
+            args=(backup_source, restore_dest, password),
             daemon=True
         )
         self._backup_thread.start()
     
-    def _run_restore_thread(self, backup_folder: str, restore_dest: str):
+    def _run_restore_thread(self, backup_source: str, restore_dest: str, password: str = None):
         """Run restore in background thread."""
         from .backup_engine import BackupProgress
+        from tkinter import messagebox
+        import tempfile
+        import os
+        import shutil
         
         def on_progress(progress: BackupProgress):
             self.after(0, lambda: self._update_progress(progress))
         
-        result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
-        self.after(0, lambda: self._handle_restore_result(result))
+        backup_folder = backup_source
+        temp_dir = None
+        
+        try:
+            # Handle compressed/encrypted files
+            if backup_source.endswith(".enc") or backup_source.endswith(".zip"):
+                from ..backup_utils import decrypt_file, decompress_folder
+                
+                temp_dir = tempfile.mkdtemp()
+                
+                if backup_source.endswith(".enc"):
+                    # Decrypt first
+                    self.after(0, lambda: self._status_label.configure(text=self._("decrypting")))
+                    zip_path = os.path.join(temp_dir, "backup.zip")
+                    
+                    if not decrypt_file(backup_source, zip_path, password):
+                        self.after(0, lambda: messagebox.showerror(
+                            self._("app_title"),
+                            self._("decrypt_failed")
+                        ))
+                        return
+                    
+                    backup_source = zip_path
+                
+                # Decompress
+                self.after(0, lambda: self._status_label.configure(text=self._("decompressing")))
+                extract_dir = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_dir)
+                
+                if not decompress_folder(backup_source, extract_dir):
+                    self.after(0, lambda: messagebox.showerror(
+                        self._("app_title"),
+                        self._("decompress_failed")
+                    ))
+                    return
+                
+                backup_folder = extract_dir
+            
+            # Run the actual restore
+            self.after(0, lambda: self._status_label.configure(text=self._("restoring")))
+            result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
+            self.after(0, lambda: self._handle_restore_result(result))
+            
+        finally:
+            # Clean up temp directory
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
     
     def _handle_restore_result(self, result):
         """Handle restore completion."""

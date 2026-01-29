@@ -513,6 +513,34 @@ STRINGS: Dict[str, Dict[str, str]] = {
         "en": "Advanced Options",
         "es": "Opciones Avanzadas"
     },
+    "restore_type_question": {
+        "en": "Do you want to restore from an encrypted/compressed file?\n\nYes = Select .zip or .zip.enc file\nNo = Select folder (normal backup)\nCancel = Cancel",
+        "es": "¿Quieres restaurar desde un archivo cifrado/comprimido?\n\nSí = Seleccionar archivo .zip o .zip.enc\nNo = Seleccionar carpeta (backup normal)\nCancelar = Cancelar"
+    },
+    "select_backup_file": {
+        "en": "Select backup file",
+        "es": "Seleccionar archivo de backup"
+    },
+    "enter_decrypt_password": {
+        "en": "Enter decryption password:",
+        "es": "Introduce la contraseña de descifrado:"
+    },
+    "decrypting": {
+        "en": "Decrypting backup...",
+        "es": "Descifrando backup..."
+    },
+    "decompressing": {
+        "en": "Decompressing backup...",
+        "es": "Descomprimiendo backup..."
+    },
+    "decrypt_failed": {
+        "en": "Failed to decrypt backup. Check your password.",
+        "es": "Error al descifrar el backup. Verifica tu contraseña."
+    },
+    "decompress_failed": {
+        "en": "Failed to decompress backup file.",
+        "es": "Error al descomprimir el archivo de backup."
+    },
 }
 
 
