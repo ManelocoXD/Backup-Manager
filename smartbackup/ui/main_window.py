@@ -629,15 +629,15 @@ class MainWindow(ctk.CTk):
         from tkinter import filedialog, messagebox, simpledialog
         import os
         
+        print("DEBUG: _show_restore_dialog called")
+        
         # First, ask user what type of backup to restore
         choice = messagebox.askyesnocancel(
             self._("restore"),
-            self._("restore_type_question") if self._config.language == "es" else 
-            "Do you want to restore from an encrypted/compressed file?\n\n"
-            "Yes = Select .zip or .zip.enc file\n"
-            "No = Select folder (normal backup)\n"
-            "Cancel = Cancel"
+            self._("restore_type_question")
         )
+        
+        print(f"DEBUG: User choice: {choice}")
         
         if choice is None:
             return
@@ -655,6 +655,7 @@ class MainWindow(ctk.CTk):
                     ("All files", "*.*")
                 ]
             )
+            print(f"DEBUG: Selected file: {backup_source}")
             if not backup_source:
                 return
             
@@ -665,6 +666,7 @@ class MainWindow(ctk.CTk):
                     self._("enter_decrypt_password"),
                     show="•"
                 )
+                print(f"DEBUG: Password entered: {'YES' if password else 'NO'}")
                 if not password:
                     return
         else:
@@ -672,6 +674,7 @@ class MainWindow(ctk.CTk):
             backup_source = filedialog.askdirectory(
                 title=self._("select_backup_folder")
             )
+            print(f"DEBUG: Selected folder: {backup_source}")
             if not backup_source:
                 return
         
@@ -679,6 +682,7 @@ class MainWindow(ctk.CTk):
         restore_dest = filedialog.askdirectory(
             title=self._("select_restore_destination")
         )
+        print(f"DEBUG: Restore destination: {restore_dest}")
         if not restore_dest:
             return
         
@@ -690,12 +694,18 @@ class MainWindow(ctk.CTk):
             f"¿Continuar con la restauración?"
         )
         
+        print(f"DEBUG: Confirm restore: {confirm}")
+        
         if confirm:
+            print(f"DEBUG: Calling _start_restore with source={backup_source}, dest={restore_dest}, password={'SET' if password else 'None'}")
             self._start_restore(backup_source, restore_dest, password)
     
     def _start_restore(self, backup_source: str, restore_dest: str, password: str = None):
         """Start the restore operation."""
-        from .backup_engine import RestoreResult
+        print(f"DEBUG: _start_restore called")
+        print(f"  Source: {backup_source}")
+        print(f"  Dest: {restore_dest}")
+        print(f"  Password: {'SET' if password else 'None'}")
         
         # Switch UI to running state
         self._is_running = True
@@ -706,6 +716,8 @@ class MainWindow(ctk.CTk):
         self._status_label.configure(text=self._("restoring"))
         self._file_label.configure(text="")
         
+        print("DEBUG: UI updated, starting thread...")
+        
         # Start restore in thread
         self._backup_thread = threading.Thread(
             target=self._run_restore_thread,
@@ -713,6 +725,7 @@ class MainWindow(ctk.CTk):
             daemon=True
         )
         self._backup_thread.start()
+        print("DEBUG: Thread started")
     
     def _cancel_restore(self):
         """Cancel the restore operation."""
@@ -721,10 +734,14 @@ class MainWindow(ctk.CTk):
     
     def _run_restore_thread(self, backup_source: str, restore_dest: str, password: str = None):
         """Run restore in background thread."""
-        from tkinter import messagebox
         import tempfile
         import os
         import shutil
+        
+        print("DEBUG: _run_restore_thread STARTED")
+        print(f"  backup_source: {backup_source}")
+        print(f"  restore_dest: {restore_dest}")
+        print(f"  password: {'SET' if password else 'None'}")
         
         def on_progress(progress: BackupProgress):
             # Simple: only update main UI
@@ -735,55 +752,78 @@ class MainWindow(ctk.CTk):
         error_msg = None
         
         try:
+            print(f"DEBUG: Checking if file is encrypted/compressed: {backup_source}")
             # Handle compressed/encrypted files
             if backup_source.endswith(".enc") or backup_source.endswith(".zip"):
-                from ..backup_utils import decrypt_file, decompress_folder
+                print("DEBUG: File IS encrypted or compressed")
                 
                 temp_dir = tempfile.mkdtemp()
+                print(f"DEBUG: Created temp dir: {temp_dir}")
                 
                 if backup_source.endswith(".enc"):
                     # Decrypt first
+                    print("DEBUG: Starting decryption...")
                     msg = self._("decrypting")
                     self.after(0, lambda: self._status_label.configure(text=msg))
                     self.after(0, lambda: self._file_label.configure(text="🔓 " + self._("decrypting")))
                     
                     zip_path = os.path.join(temp_dir, "backup.zip")
+                    print(f"DEBUG: Will decrypt to: {zip_path}")
                     
-                    if not decrypt_file(backup_source, zip_path, password):
+                    decrypt_result = decrypt_file(backup_source, zip_path, password)
+                    print(f"DEBUG: Decrypt result: {decrypt_result}")
+                    
+                    if not decrypt_result:
                         error_msg = self._("decrypt_failed")
+                        print(f"DEBUG: DECRYPTION FAILED: {error_msg}")
                         fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                         self.after(0, lambda: self._handle_restore_result(fail_result))
                         return
                     
+                    print("DEBUG: Decryption successful")
                     backup_source = zip_path
                 
                 # Decompress
+                print("DEBUG: Starting decompression...")
                 msg = self._("decompressing")
                 self.after(0, lambda: self._status_label.configure(text=msg))
                 self.after(0, lambda: self._file_label.configure(text="📦 " + self._("decompressing")))
                 
                 extract_dir = os.path.join(temp_dir, "extracted")
                 os.makedirs(extract_dir)
+                print(f"DEBUG: Will extract to: {extract_dir}")
                 
-                if not decompress_folder(backup_source, extract_dir):
+                decompress_result = decompress_folder(backup_source, extract_dir)
+                print(f"DEBUG: Decompress result: {decompress_result}")
+                
+                if not decompress_result:
                     error_msg = self._("decompress_failed")
+                    print(f"DEBUG: DECOMPRESSION FAILED: {error_msg}")
                     fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
                     self.after(0, lambda: self._handle_restore_result(fail_result))
                     return
                 
+                print("DEBUG: Decompression successful")
                 backup_folder = extract_dir
+            else:
+                print("DEBUG: File is NOT encrypted/compressed, using as-is")
             
             # Run the actual restore
+            print("DEBUG: Starting actual restore...")
             msg = self._("restoring")
             self.after(0, lambda: self._status_label.configure(text=msg))
             self.after(0, lambda: self._file_label.configure(text="📂 " + self._("restoring")))
             
+            print(f"DEBUG: Calling engine.run_restore('{backup_folder}', '{restore_dest}')")
             result = self._engine.run_restore(backup_folder, restore_dest, on_progress)
+            print(f"DEBUG: Restore completed. Success: {result.success}")
             self.after(0, lambda: self._handle_restore_result(result))
             
         except Exception as e:
             # Catch unexpected errors to preventing hanging UI
-            print(f"Restore thread error: {e}")
+            print(f"DEBUG: EXCEPTION in restore thread: {e}")
+            import traceback
+            traceback.print_exc()
             error_msg = str(e)
             fail_result = RestoreResult(False, 0, 0, 0, 0, 0, error_msg)
             self.after(0, lambda: self._handle_restore_result(fail_result))
@@ -792,15 +832,14 @@ class MainWindow(ctk.CTk):
             # Clean up temp directory
             if temp_dir and os.path.exists(temp_dir):
                 try:
+                    print(f"DEBUG: Cleaning up temp dir: {temp_dir}")
                     shutil.rmtree(temp_dir)
                 except:
                     pass
+            print("DEBUG: _run_restore_thread FINISHED")
     
     def _handle_restore_result(self, result):
         """Handle restore completion."""
-        from .backup_engine import RestoreResult
-        from tkinter import messagebox
-        
         self._is_running = False
         
         # Reset UI
