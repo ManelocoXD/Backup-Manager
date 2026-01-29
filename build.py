@@ -56,28 +56,69 @@ def build_windows():
         sys.exit(1)
 
 
-def build_linux_appimage():
-    """Instructions for building Linux AppImage."""
-    print("🐧 Building Linux AppImage...")
+def build_linux():
+    """Build Linux executable using PyInstaller."""
+    print("🐧 Building SmartBackup for Linux...")
     print()
-    print("To create an AppImage on Linux:")
-    print()
-    print("1. Install dependencies:")
-    print("   sudo apt install python3-pip python3-venv")
-    print()
-    print("2. Create virtual environment:")
-    print("   python3 -m venv venv")
-    print("   source venv/bin/activate")
-    print("   pip install -r requirements.txt pyinstaller")
-    print()
-    print("3. Build with PyInstaller:")
-    print("   pyinstaller --clean --noconfirm smartbackup.spec")
-    print()
-    print("4. Create AppImage using linuxdeploy or appimagetool:")
-    print("   wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage")
-    print("   chmod +x linuxdeploy-x86_64.AppImage")
-    print("   ./linuxdeploy-x86_64.AppImage --appdir AppDir --executable dist/SmartBackup --output appimage")
-    print()
+    
+    # Ensure we're in the right directory
+    project_root = Path(__file__).parent
+    os.chdir(project_root)
+    
+    # Aggressive Cleanup
+    print("🧹 Cleaning previous builds...")
+    import shutil
+    for folder in ['build', 'dist']:
+        path = project_root / folder
+        if path.exists():
+            try:
+                shutil.rmtree(path)
+                print(f"   Removed {folder}/")
+            except Exception as e:
+                print(f"   ⚠️ Could not remove {folder}/: {e}")
+    
+    # Check if PyInstaller is installed
+    try:
+        import PyInstaller
+    except ImportError:
+        print("❌ PyInstaller not found. Installing...")
+        print("   Note: On Linux, you might need to run: pip install pyinstaller")
+        try:
+           subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+        except Exception as e:
+           print(f"   ⚠️ Auto-install failed: {e}")
+           print("   Please install PyInstaller manually.")
+           sys.exit(1)
+    
+    # Run PyInstaller with spec file
+    print("📦 Running PyInstaller...")
+    try:
+        result = subprocess.run([
+            sys.executable, "-m", "PyInstaller",
+            "--clean",
+            "--noconfirm",
+            "smartbackup.spec"
+        ])
+        
+        if result.returncode == 0:
+            print()
+            print("✅ Build successful!")
+            dist_path = project_root / 'dist' / 'SmartBackup'
+            print(f"📦 Executable: {dist_path}")
+            
+            # Create a simple run script if needed, or user can run the binary directly
+            # SmartBackup spec file usually produces a single file or directory. 
+            # Assuming 'onefile' or 'onedir' based on spec. 
+            # If spec produces 'SmartBackup' binary (no extension).
+            
+        else:
+            print()
+            print("❌ Build failed!")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"❌ Error during build: {e}")
+        sys.exit(1)
 
 
 def main():
@@ -89,8 +130,8 @@ def main():
     
     if sys.platform == "win32":
         build_windows()
-    elif sys.platform == "linux":
-        build_linux_appimage()
+    elif sys.platform.startswith("linux"):
+        build_linux()
     else:
         print(f"⚠️ Platform '{sys.platform}' not fully supported.")
         print("   Attempting Windows-style build...")
