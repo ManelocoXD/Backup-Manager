@@ -121,6 +121,77 @@ def build_linux():
         sys.exit(1)
 
 
+def build_macos():
+    """Build macOS executable using PyInstaller."""
+    print("🍎 Building SmartBackup for macOS...")
+    print()
+    
+    # Ensure we're in the right directory
+    project_root = Path(__file__).parent
+    os.chdir(project_root)
+    
+    # Aggressive Cleanup
+    print("🧹 Cleaning previous builds...")
+    import shutil
+    for folder in ['build', 'dist']:
+        path = project_root / folder
+        if path.exists():
+            try:
+                shutil.rmtree(path)
+                print(f"   Removed {folder}/")
+            except Exception as e:
+                print(f"   ⚠️ Could not remove {folder}/: {e}")
+    
+    # Check if PyInstaller is installed
+    try:
+        import PyInstaller
+    except ImportError:
+        print("❌ PyInstaller not found. Installing...")
+        try:
+           subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+        except Exception as e:
+           print(f"   ⚠️ Auto-install failed: {e}")
+           sys.exit(1)
+            
+    # Check for pyobjc (needed for pystray on mac)
+    try:
+        import objc
+    except ImportError:
+        print("⚠️ 'pyobjc' not found (required for system tray on macOS).")
+        print("   Installing pyobjc-framework-Cocoa...")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pyobjc-framework-Cocoa"], check=True)
+        except Exception as e:
+            print(f"   ⚠️ Auto-install failed: {e}")
+    
+    # Run PyInstaller with spec file
+    print("📦 Running PyInstaller...")
+    try:
+        # On macOS, we might want to ensure we're building a .app bundle or a binary
+        # The spec file controls this. 
+        result = subprocess.run([
+            sys.executable, "-m", "PyInstaller",
+            "--clean",
+            "--noconfirm",
+            "smartbackup.spec"
+        ])
+        
+        if result.returncode == 0:
+            print()
+            print("✅ Build successful!")
+            # Check what was created
+            dist_dir = project_root / 'dist'
+            print(f"📦 Check 'dist' folder: {dist_dir}")
+        else:
+            print()
+            print("❌ Build failed!")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"❌ Error during build: {e}")
+        sys.exit(1)
+
+
 def main():
     """Main build script entry point."""
     print("=" * 50)
@@ -132,6 +203,8 @@ def main():
         build_windows()
     elif sys.platform.startswith("linux"):
         build_linux()
+    elif sys.platform == "darwin":
+        build_macos()
     else:
         print(f"⚠️ Platform '{sys.platform}' not fully supported.")
         print("   Attempting Windows-style build...")
