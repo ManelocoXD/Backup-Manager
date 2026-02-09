@@ -232,6 +232,7 @@ class BackupEngine:
         
         return False, current_hash  # Content identical (even if mtime changed)
     
+    
     def run_backup(
         self,
         source: str,
@@ -251,11 +252,16 @@ class BackupEngine:
         Returns:
             BackupResult with operation details
         """
+        from .logger import get_logger
+        logger = get_logger()
+        
         self._reset_cancel()
         start_time = datetime.now()
         
         source_path = Path(source)
         dest_path = Path(destination)
+        
+        logger.info(f"Starting backup: mode={mode.value}, source={source}, dest={destination}")
         
         # Initialize progress
         progress = BackupProgress()
@@ -266,6 +272,8 @@ class BackupEngine:
         
         # Validate paths
         if not source_path.exists():
+            msg = "Source folder does not exist"
+            logger.error(msg)
             return BackupResult(
                 success=False,
                 session_id=-1,
@@ -274,16 +282,75 @@ class BackupEngine:
                 files_skipped=0,
                 bytes_copied=0,
                 duration_seconds=0,
-                error_message="Source folder does not exist"
+                error_message=msg
             )
         
+        # --- ROBUSTNESS: Determine Effective Mode ---
+        # If Incremental/Differential requested, check if we have a valid reference.
+        # If not, FORCE FULL backup to ensure chain integrity.
+        
+        effective_mode = mode
+        reference_session = None
+        reference_files = None
+        forced_full_reason = None
+        
+        if mode in (BackupMode.INCREMENTAL, BackupMode.DIFFERENTIAL):
+            # Check DB for reference
+            if mode == BackupMode.INCREMENTAL:
+                reference_session = self._db.get_last_session(source)
+            else: # Differential
+                reference_session = self._db.get_last_session(source, mode="full")
+            
+            # Validation Logic
+            is_valid_reference = False
+            
+            if reference_session:
+                # DB record exists. Now check physical existence.
+                ref_folder_name = reference_session.get('backup_folder')
+                
+                # We expect the backup to be in the same destination root
+                # Note: This assumes user hasn't moved backups to a new drive entirely.
+                # If 'dest_path' in DB matches current 'destination', we look there.
+                # If they differ, we might look in the old path? 
+                # For robustness, we check the CURRENT destination for the folder.
+                
+                # Heuristic: We look for the reference folder in the *current* destination parent.
+                # If not found there, we assume it's missing (even if it exists on another drive).
+                # Why? Because we need it here for the chain logic to hold easily? 
+                # Actually, for Differential/Incremental *creation*, we mainly need DB hashes.
+                # BUT for *Restore*, we need the files.
+                # If we make an incremental based on a missing folder, restoration will FAIL.
+                # So we MUST ensure the physical files are reachable.
+                
+                if ref_folder_name:
+                    ref_path = dest_path / ref_folder_name
+                    if ref_path.exists():
+                        is_valid_reference = True
+                    else:
+                        forced_full_reason = f"Reference backup folder missing: {ref_folder_name}"
+                else:
+                    # Legacy session without folder name
+                    # We can't verify execution, safer to force full
+                    forced_full_reason = "Legacy reference session incompatible"
+            else:
+                forced_full_reason = "No previous backup found"
+            
+            if not is_valid_reference:
+                logger.warning(f"{forced_full_reason}. Forcing FULL backup.")
+                effective_mode = BackupMode.FULL
+                reference_session = None # Clear it so we don't try to use it
+        
         # Create backup folder with descriptive name
-        backup_folder_name = self._generate_backup_folder_name(mode)
+        # Use effective_mode for naming to avoid confusion (e.g. don't name it "Incremental" if it's actually Full)
+        backup_folder_name = self._generate_backup_folder_name(effective_mode)
         backup_path = dest_path / backup_folder_name
         backup_path.mkdir(parents=True, exist_ok=True)
         
-        # Create backup session (NOW STORING FOLDER NAME)
-        session_id = self._db.create_session(source, destination, mode.value, backup_folder_name)
+        # Create backup session
+        # IMPORTANT: Store as effective_mode (FULL) so it acts as an anchor for future backups
+        session_id = self._db.create_session(source, destination, effective_mode.value, backup_folder_name)
+        
+        logger.info(f"Session {session_id} created. Mode: {effective_mode.value}. Folder: {backup_folder_name}")
         
         try:
             # Count files
@@ -291,31 +358,15 @@ class BackupEngine:
             self._db.update_session_progress(session_id, files_total=progress.files_total)
             update_progress()
             
-            # Get reference session for incremental/differential
-            reference_session = None
-            reference_files = None
-            
-            if mode == BackupMode.INCREMENTAL:
-                # Reference: last completed backup of any type
-                reference_session = self._db.get_last_session(source)
-            elif mode == BackupMode.DIFFERENTIAL:
-                # Reference: last completed FULL backup
-                reference_session = self._db.get_last_session(source, mode="full")
-            
-            if reference_session:
+            # Re-fetch reference files ONLY if we are still Incremental/Differential
+            if effective_mode in (BackupMode.INCREMENTAL, BackupMode.DIFFERENTIAL) and reference_session:
+                logger.info(f"Using reference session {reference_session['id']} for {effective_mode.value} backup")
                 reference_files = self._db.get_session_files(reference_session["id"])
-            
-            # Check if incremental/differential can proceed
-            if mode in (BackupMode.INCREMENTAL, BackupMode.DIFFERENTIAL):
-                required_mode = "full" if mode == BackupMode.DIFFERENTIAL else None
-                if not reference_session:
-                    # No reference backup exists, suggest full backup
-                    error_msg = "no_full_backup" if mode == BackupMode.DIFFERENTIAL else "no_previous_backup"
-                    # For now, we'll proceed as full backup
-                    reference_files = {}
+            else:
+                reference_files = {} # Full backup or forced full
             
             # Copy empty directories for full backup
-            if mode == BackupMode.FULL:
+            if effective_mode == BackupMode.FULL:
                 for source_dir in self._get_all_directories(source_path):
                     relative_dir = source_dir.relative_to(source_path)
                     dest_dir = backup_path / relative_dir
@@ -330,6 +381,7 @@ class BackupEngine:
                     progress.is_cancelled = True
                     self._db.complete_session(session_id, status="cancelled")
                     update_progress()
+                    logger.info("Backup cancelled by user")
                     
                     duration = (datetime.now() - start_time).total_seconds()
                     return BackupResult(
@@ -352,7 +404,7 @@ class BackupEngine:
                 should_copy, file_hash = self._should_copy_file(
                     source_file, 
                     relative_path, 
-                    mode, 
+                    effective_mode, 
                     reference_session, 
                     reference_files
                 )
@@ -480,11 +532,16 @@ class BackupEngine:
         Uses 'Smart Restore' to reconstruct files from the backup chain if possible.
         Falls back to 'Legacy Restore' (simple copy) if session info is missing.
         """
+        from .logger import get_logger
+        logger = get_logger()
+        
         self._reset_cancel()
         start_time = datetime.now()
         
         backup_path = Path(backup_folder)
         dest_path = Path(destination)
+        
+        logger.info(f"Starting restore: source={backup_folder}, dest={destination}")
         
         # Initialize progress
         progress = BackupProgress()
@@ -495,7 +552,9 @@ class BackupEngine:
         
         # Validate backup folder
         if not backup_path.exists():
-            return RestoreResult(False, 0, 0, 0, 0, 0, "Backup folder does not exist")
+            msg = "Backup folder does not exist"
+            logger.error(msg)
+            return RestoreResult(False, 0, 0, 0, 0, 0, msg)
         
         # Create destination if needed
         dest_path.mkdir(parents=True, exist_ok=True)
@@ -506,6 +565,7 @@ class BackupEngine:
             session = self._db.get_session_by_folder(backup_folder)
             
             if session:
+                logger.info(f"Smart Restore identified session {session.get('id')}")
                 # 2. Get File Manifest
                 files_to_restore = self._db.get_session_files(session['id'])
                 progress.files_total = len(files_to_restore)
@@ -526,6 +586,7 @@ class BackupEngine:
                 # Chain: [Current, Prev1, Prev2, ... Full]
                 # Note: 'session' dict includes backup_folder name/path info
                 chain = [session] + history
+                logger.info(f"Backup chain length: {len(chain)}")
                 
                 # Pre-calculate backup roots for the chain
                 # Need to handle case where dest_path in DB might differ from current location if user moved backups.
@@ -568,7 +629,8 @@ class BackupEngine:
                                 files_restored += 1
                                 bytes_restored += candidate_source.stat().st_size
                                 found = True
-                            except (IOError, OSError, PermissionError):
+                            except (IOError, OSError, PermissionError) as e:
+                                logger.warning(f"Failed to copy {candidate_source}: {e}")
                                 files_skipped += 1
                                 found = True # Found but failed to copy
                             break
@@ -576,7 +638,9 @@ class BackupEngine:
                     if not found:
                         # File is in manifest but content missing from all chain folders.
                         # This implies corruption or missing backup folder.
-                        print(f"Error: Content for {rel_path} not found in backup chain.")
+                        msg = f"Error: Content for {rel_path} not found in backup chain."
+                        print(msg)
+                        logger.error(msg)
                         files_skipped += 1
                     
                     progress.files_processed += 1
@@ -588,18 +652,22 @@ class BackupEngine:
                 duration = (datetime.now() - start_time).total_seconds()
                 
                 if self._is_cancelled():
+                     logger.info("Restore cancelled by user")
                      return RestoreResult(False, progress.files_total, files_restored, files_skipped, bytes_restored, duration, "Restore cancelled by user")
 
+                logger.info(f"Restore completed successfully. Restored: {files_restored}, Skipped: {files_skipped}")
                 return RestoreResult(True, progress.files_total, files_restored, files_skipped, bytes_restored, duration)
 
             else:
                 # --- LEGACY RESTORE (Fallback) ---
                 # No DB session found (old backup). Copy exactly what's in the folder.
+                logger.info("No session found in DB. Falling back to Legacy Restore.")
                 return self._legacy_restore(backup_path, dest_path, progress, update_progress, start_time)
             
         except Exception as e:
             import traceback
             traceback.print_exc()
+            logger.exception("Restore failed with exception")
             duration = (datetime.now() - start_time).total_seconds()
             return RestoreResult(False, progress.files_total, 0, 0, 0, duration, str(e))
 
