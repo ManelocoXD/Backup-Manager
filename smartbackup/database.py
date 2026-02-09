@@ -38,9 +38,16 @@ class Database:
                     files_copied INTEGER DEFAULT 0,
                     files_skipped INTEGER DEFAULT 0,
                     bytes_copied INTEGER DEFAULT 0,
-                    error_message TEXT
+                    error_message TEXT,
+                    backup_folder TEXT
                 )
             """)
+            
+            # Check if backup_folder column exists (migration for existing DB)
+            cursor.execute("PRAGMA table_info(backup_sessions)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if "backup_folder" not in columns:
+                cursor.execute("ALTER TABLE backup_sessions ADD COLUMN backup_folder TEXT")
             
             # File hashes table for deduplication
             cursor.execute("""
@@ -68,6 +75,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_sessions_source 
                 ON backup_sessions(source_path)
             """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sessions_folder 
+                ON backup_sessions(backup_folder)
+            """)
             
             conn.commit()
     
@@ -83,7 +94,7 @@ class Database:
     
     # ==================== Backup Sessions ====================
     
-    def create_session(self, source: str, dest: str, mode: str) -> int:
+    def create_session(self, source: str, dest: str, mode: str, backup_folder: str = None) -> int:
         """
         Create a new backup session.
         
@@ -94,9 +105,9 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO backup_sessions 
-                (source_path, dest_path, mode, started_at, status)
-                VALUES (?, ?, ?, ?, 'running')
-            """, (source, dest, mode, datetime.now()))
+                (source_path, dest_path, mode, started_at, status, backup_folder)
+                VALUES (?, ?, ?, ?, 'running', ?)
+            """, (source, dest, mode, datetime.now(), backup_folder))
             conn.commit()
             return cursor.lastrowid
     
@@ -198,6 +209,46 @@ class Database:
                 SELECT * FROM backup_sessions 
                 ORDER BY started_at DESC LIMIT ?
             """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+            
+    def get_session_by_folder(self, backup_folder: str) -> Optional[Dict[str, Any]]:
+        """
+        Find a session based on the backup folder name or path.
+        """
+        # Try finding by full path match first (if backup_folder column populated)
+        folder_name = Path(backup_folder).name
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Exact match on backup_folder
+            cursor.execute("SELECT * FROM backup_sessions WHERE backup_folder = ?", (folder_name,))
+            row = cursor.fetchone()
+            if row: return dict(row)
+            
+            # 2. Try match containing folder name (fallback)
+            cursor.execute("SELECT * FROM backup_sessions WHERE backup_folder LIKE ?", (f"%{folder_name}%",))
+            row = cursor.fetchone()
+            if row: return dict(row)
+            
+            return None
+
+    def get_sessions_history(self, source_path: str, before_date: datetime = None) -> List[Dict[str, Any]]:
+        """
+        Get backup history for a source path, ordered by date descending.
+        Useful for reconstructing restore chains.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            query = "SELECT * FROM backup_sessions WHERE source_path = ? AND status = 'completed'"
+            
+            args = [source_path]
+            if before_date:
+                query += " AND started_at < ?"
+                args.append(before_date)
+            
+            query += " ORDER BY started_at DESC"
+            cursor.execute(query, tuple(args))
             return [dict(row) for row in cursor.fetchall()]
     
     # ==================== File Hashes ====================

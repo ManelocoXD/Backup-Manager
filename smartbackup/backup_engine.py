@@ -163,7 +163,7 @@ class BackupEngine:
         Returns:
             (should_copy, current_hash) tuple
         """
-        # Full backup: always copy
+        # Full backup: always copy, but still need hash
         if mode == BackupMode.FULL:
             file_hash = compute_file_hash(source_file)
             return True, file_hash
@@ -174,21 +174,63 @@ class BackupEngine:
             file_hash = compute_file_hash(source_file)
             return True, file_hash
         
-        # Compute current file hash
+        # Check if file exists in reference
+        if relative_path not in reference_files:
+            # New file -> Copy
+            file_hash = compute_file_hash(source_file)
+            return True, file_hash
+        
+        # --- QUICK CHECK (Performance Optimization) ---
+        # Before reading the whole file for SHA-256, check metadata.
+        # If size and mtime differ, we know it changed.
+        # If they match, we assume it's unchanged (standard backup practice).
+        
+        ref_hash, ref_size, ref_mtime = reference_files[relative_path]
+        
+        try:
+            stat = source_file.stat()
+            current_size = stat.st_size
+            current_mtime = datetime.fromtimestamp(stat.st_mtime)
+            
+            # Check size first (fastest)
+            if current_size != ref_size:
+                # Size changed -> Content changed -> Copy
+                current_hash = compute_file_hash(source_file)
+                return True, current_hash
+            
+            # Check mtime (with 1s tolerance for FS differences)
+            # Note: ref_mtime comes from DB as datetime or string depending on sqlite adapter
+            if isinstance(ref_mtime, str):
+                try:
+                    ref_mtime = datetime.fromisoformat(ref_mtime)
+                except ValueError:
+                    pass # Ignore parsing error, fall back to hash check
+            
+            if isinstance(ref_mtime, datetime):
+                time_diff = abs((current_mtime - ref_mtime).total_seconds())
+                if time_diff < 1.0:
+                    # Size matches, mtime matches -> Assume unchanged
+                    # Return False (don't copy) and REUSE reference hash (avoid I/O)
+                    return False, ref_hash
+        except Exception:
+            # If metadata check fails, fall back to safe hash comparison
+            pass
+            
+        # --- FALLBACK / CONFIRMATION ---
+        # If we reach here, metadata didn't definitively say "unchanged" 
+        # (or we distrust it), OR it said "changed" but we want to be sure? 
+        # Actually, if size changed, we returned True.
+        # If mtime changed (or parsed wrong), we come here.
+        # So we perform the expensive hash check now.
+        
         current_hash = compute_file_hash(source_file)
         if current_hash is None:
             return False, None  # Can't read file, skip
         
-        # Check if file exists in reference
-        if relative_path not in reference_files:
-            return True, current_hash  # New file
-        
-        # Compare hashes
-        ref_hash, ref_size, ref_mtime = reference_files[relative_path]
         if current_hash != ref_hash:
-            return True, current_hash  # File changed
+            return True, current_hash  # Content changed
         
-        return False, current_hash  # File unchanged
+        return False, current_hash  # Content identical (even if mtime changed)
     
     def run_backup(
         self,
@@ -240,8 +282,8 @@ class BackupEngine:
         backup_path = dest_path / backup_folder_name
         backup_path.mkdir(parents=True, exist_ok=True)
         
-        # Create backup session
-        session_id = self._db.create_session(source, destination, mode.value)
+        # Create backup session (NOW STORING FOLDER NAME)
+        session_id = self._db.create_session(source, destination, mode.value, backup_folder_name)
         
         try:
             # Count files
@@ -435,13 +477,8 @@ class BackupEngine:
         """
         Restore files from a backup folder to a destination.
         
-        Args:
-            backup_folder: Path to the backup folder to restore from
-            destination: Destination directory path
-            progress_callback: Optional callback for progress updates
-        
-        Returns:
-            RestoreResult with operation details
+        Uses 'Smart Restore' to reconstruct files from the backup chain if possible.
+        Falls back to 'Legacy Restore' (simple copy) if session info is missing.
         """
         self._reset_cancel()
         start_time = datetime.now()
@@ -458,65 +495,148 @@ class BackupEngine:
         
         # Validate backup folder
         if not backup_path.exists():
-            return RestoreResult(
-                success=False,
-                files_total=0,
-                files_restored=0,
-                files_skipped=0,
-                bytes_restored=0,
-                duration_seconds=0,
-                error_message="Backup folder does not exist"
-            )
+            return RestoreResult(False, 0, 0, 0, 0, 0, "Backup folder does not exist")
         
         # Create destination if needed
         dest_path.mkdir(parents=True, exist_ok=True)
         
         try:
-            # Count files in backup
-            progress.files_total = self._count_files(backup_path)
-            update_progress()
+            # --- SMART RESTORE LOGIC ---
+            # 1. Identify Session
+            session = self._db.get_session_by_folder(backup_folder)
             
-            # First, copy all directories (including empty ones)
+            if session:
+                # 2. Get File Manifest
+                files_to_restore = self._db.get_session_files(session['id'])
+                progress.files_total = len(files_to_restore)
+                update_progress()
+                
+                # 3. Build Backup Chain (for finding file content)
+                source_path = session['source_path']
+                started_at = session['started_at']
+                if isinstance(started_at, str):
+                    try:
+                        started_at = datetime.fromisoformat(started_at)
+                    except ValueError:
+                        pass # Keep as string or handle error
+                
+                # Get history: current session + previous sessions
+                history = self._db.get_sessions_history(source_path, before_date=started_at)
+                
+                # Chain: [Current, Prev1, Prev2, ... Full]
+                # Note: 'session' dict includes backup_folder name/path info
+                chain = [session] + history
+                
+                # Pre-calculate backup roots for the chain
+                # Need to handle case where dest_path in DB might differ from current location if user moved backups.
+                # Heuristic: Require backup folders to be siblings of the selected 'backup_folder'.
+                # i.e., root_backup_dir = backup_path.parent
+                root_backup_dir = backup_path.parent
+                
+                files_restored = 0
+                files_skipped = 0
+                bytes_restored = 0
+                
+                for rel_path, (f_hash, f_size, f_mtime) in files_to_restore.items():
+                    if self._is_cancelled():
+                        break
+                        
+                    progress.current_file = rel_path
+                    update_progress()
+                    
+                    found = False
+                    dest_file = dest_path / rel_path
+                    
+                    # Search logic:
+                    # 1. Check current session folder (most likely)
+                    # 2. Check previous sessions in order
+                    
+                    for sess in chain:
+                        sess_folder_name = sess.get('backup_folder')
+                        if not sess_folder_name:
+                             # Fallback: try to guess or skip
+                             # If we can't find the folder name, we can't find the file.
+                             continue
+                             
+                        candidate_source = root_backup_dir / sess_folder_name / rel_path
+                        
+                        if candidate_source.exists():
+                            # Found it!
+                            try:
+                                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(candidate_source, dest_file)
+                                files_restored += 1
+                                bytes_restored += candidate_source.stat().st_size
+                                found = True
+                            except (IOError, OSError, PermissionError):
+                                files_skipped += 1
+                                found = True # Found but failed to copy
+                            break
+                    
+                    if not found:
+                        # File is in manifest but content missing from all chain folders.
+                        # This implies corruption or missing backup folder.
+                        print(f"Error: Content for {rel_path} not found in backup chain.")
+                        files_skipped += 1
+                    
+                    progress.files_processed += 1
+                    progress.files_copied = files_restored
+                    progress.files_skipped = files_skipped
+                    progress.bytes_copied = bytes_restored
+                    update_progress()
+                    
+                duration = (datetime.now() - start_time).total_seconds()
+                
+                if self._is_cancelled():
+                     return RestoreResult(False, progress.files_total, files_restored, files_skipped, bytes_restored, duration, "Restore cancelled by user")
+
+                return RestoreResult(True, progress.files_total, files_restored, files_skipped, bytes_restored, duration)
+
+            else:
+                # --- LEGACY RESTORE (Fallback) ---
+                # No DB session found (old backup). Copy exactly what's in the folder.
+                return self._legacy_restore(backup_path, dest_path, progress, update_progress, start_time)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            duration = (datetime.now() - start_time).total_seconds()
+            return RestoreResult(False, progress.files_total, 0, 0, 0, duration, str(e))
+
+    def _legacy_restore(self, backup_path, dest_path, progress, update_callback, start_time):
+        """Legacy restore logic: simple copy of folder contents."""
+        try:
+            progress.files_total = self._count_files(backup_path)
+            update_callback()
+            
+            files_restored = 0
+            files_skipped = 0
+            bytes_restored = 0
+            
+            # Copy all directories
             for source_dir in self._get_all_directories(backup_path):
                 relative_dir = source_dir.relative_to(backup_path)
                 dest_dir = dest_path / relative_dir
                 dest_dir.mkdir(parents=True, exist_ok=True)
             
             # Copy all files
-            files_restored = 0
-            files_skipped = 0
-            bytes_restored = 0
-            
             for backup_file in self._get_all_files(backup_path):
-                # Check for cancellation
                 if self._is_cancelled():
-                    duration = (datetime.now() - start_time).total_seconds()
-                    return RestoreResult(
-                        success=False,
-                        files_total=progress.files_total,
-                        files_restored=files_restored,
-                        files_skipped=files_skipped,
-                        bytes_restored=bytes_restored,
-                        duration_seconds=duration,
-                        error_message="Restore cancelled by user"
-                    )
+                     duration = (datetime.now() - start_time).total_seconds()
+                     return RestoreResult(False, progress.files_total, files_restored, files_skipped, bytes_restored, duration, "Restore cancelled by user")
                 
                 relative_path = backup_file.relative_to(backup_path)
                 dest_file = dest_path / relative_path
                 
                 progress.current_file = str(relative_path)
-                update_progress()
+                update_callback()
                 
                 try:
-                    # Create parent directories
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Copy file
                     shutil.copy2(backup_file, dest_file)
                     file_size = backup_file.stat().st_size
                     files_restored += 1
                     bytes_restored += file_size
-                    
                 except (IOError, OSError, PermissionError):
                     files_skipped += 1
                 
@@ -524,29 +644,14 @@ class BackupEngine:
                 progress.files_copied = files_restored
                 progress.files_skipped = files_skipped
                 progress.bytes_copied = bytes_restored
-                update_progress()
+                update_callback()
             
             duration = (datetime.now() - start_time).total_seconds()
-            return RestoreResult(
-                success=True,
-                files_total=progress.files_total,
-                files_restored=files_restored,
-                files_skipped=files_skipped,
-                bytes_restored=bytes_restored,
-                duration_seconds=duration
-            )
+            return RestoreResult(True, progress.files_total, files_restored, files_skipped, bytes_restored, duration)
             
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
-            return RestoreResult(
-                success=False,
-                files_total=progress.files_total,
-                files_restored=0,
-                files_skipped=0,
-                bytes_restored=0,
-                duration_seconds=duration,
-                error_message=str(e)
-            )
+            return RestoreResult(False, progress.files_total, 0, 0, 0, duration, str(e))
 
 
 # Global engine instance
