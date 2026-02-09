@@ -339,8 +339,37 @@ class BackupScheduler:
         
         with self._lock:
             schedules_to_run = []
+            schedules_to_save = False
+            
             for schedule in self._schedules.values():
-                if not schedule.enabled or not schedule.next_run:
+                if not schedule.enabled:
+                    continue
+                
+                # --- DYNAMIC TIME CORRECTION ---
+                # Check if system time changed (e.g. user went back in time)
+                # implying the backup should run sooner than stored.
+                try:
+                    theoretical_next_str = self._calculate_next_run(schedule)
+                    theoretical_next = datetime.fromisoformat(theoretical_next_str)
+                    
+                    if schedule.next_run:
+                        stored_next = datetime.fromisoformat(schedule.next_run)
+                        
+                        # If theoretical next run is EARLIER than stored, 
+                        # it means we went back in time (or stored is stale/future).
+                        # We must update to the earlier time so we don't miss it.
+                        # E.g. Stored=14:00. Clock went 13:00->10:00. Theoretical=10:00 (if interval) or 14:00.
+                        # Daily Case: Stored=Tomorrow 09:00. Clock 13:00->08:00. Theoretical=Today 09:00.
+                        # Today 09:00 < Tomorrow 09:00. Update!
+                        
+                        if theoretical_next < stored_next:
+                            print(f"DEBUG: Time shift detected. adjusting schedule {schedule.name}: {stored_next} -> {theoretical_next}")
+                            schedule.next_run = theoretical_next_str
+                            schedules_to_save = True
+                except Exception as e:
+                    print(f"Error checking time shift: {e}")
+
+                if not schedule.next_run:
                     continue
                 
                 try:
@@ -349,6 +378,9 @@ class BackupScheduler:
                         schedules_to_run.append(schedule)
                 except Exception:
                     pass
+            
+            if schedules_to_save:
+                self._save_schedules()
         
         # Run due backups (outside lock to avoid blocking)
         for schedule in schedules_to_run:
