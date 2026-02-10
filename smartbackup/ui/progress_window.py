@@ -144,6 +144,9 @@ class ScheduledBackupWindow(ctk.CTkToplevel):
         percent = progress.progress_percent / 100
         self._progress_bar.set(percent)
         
+        # Update title
+        self.title(f"SmartBackup - {int(percent*100)}%")
+        
         # Update status
         status_text = f"{progress.files_processed}/{progress.files_total} - "
         status_text += self._("files_copied", count=progress.files_copied)
@@ -161,6 +164,7 @@ class ScheduledBackupWindow(ctk.CTkToplevel):
         
         # Update UI
         self._progress_bar.set(1)
+        self.title("SmartBackup - " + self._("status_complete"))
         
         if result.success:
             self._status_label.configure(
@@ -353,6 +357,7 @@ class RestoreProgressWindow(ctk.CTkToplevel):
         # Update progress bar
         percent = progress.progress_percent / 100
         self._progress_bar.set(percent)
+        self.title(f"SmartBackup - {self._('restoring')} ({int(percent*100)}%)")
         
         # Update status
         status_text = f"{progress.files_processed}/{progress.files_total} - "
@@ -373,6 +378,7 @@ class RestoreProgressWindow(ctk.CTkToplevel):
         
         # Update UI
         self._progress_bar.set(1)
+        self.title("SmartBackup - " + self._("restore_complete"))
         
         if success:
             self._status_label.configure(

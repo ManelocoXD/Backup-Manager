@@ -567,6 +567,9 @@ class MainWindow(ctk.CTk):
         percent = progress.progress_percent / 100
         self._progress_bar.set(percent)
         
+        # Update window title
+        self.title(f"SmartBackup - {int(percent*100)}%")
+        
         # Update status
         status_text = f"{progress.files_processed}/{progress.files_total} - "
         status_text += self._("files_copied", count=progress.files_copied)
@@ -586,6 +589,7 @@ class MainWindow(ctk.CTk):
         self._cancel_btn.pack_forget()
         self._backup_btn.pack(fill="x")
         self._progress_bar.set(1 if result.success else 0)
+        self.title(self._("app_title"))  # Reset title
         
         if result.success:
             self._status_label.configure(
@@ -847,6 +851,7 @@ class MainWindow(ctk.CTk):
         self._backup_btn.pack(fill="x")
         self._progress_bar.set(1 if result.success else 0)
         self._file_label.configure(text="")
+        self.title(self._("app_title"))  # Reset title
         
         if result.success:
             self._status_label.configure(
